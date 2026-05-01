@@ -16,7 +16,7 @@ import chrombpnet.training.utils.losses as losses
 from chrombpnet.training.utils.data_utils import get_seq as get_seq
 import chrombpnet.training.utils.one_hot as one_hot
 from tensorflow.keras.utils import get_custom_objects
-from tensorflow.keras.models import load_model
+from chrombpnet.training.utils.model_io import load_model_compat
 
 
 NARROWPEAK_SCHEMA = ["chr", "start", "end", "1", "2", "3", "4", "5", "6", "summit"]
@@ -26,7 +26,7 @@ def load_model_wrapper(args):
     # read .h5 model
     custom_objects={"multinomial_nll":losses.multinomial_nll, "tf": tf}    
     get_custom_objects().update(custom_objects)    
-    model=load_model(args.model_h5, compile=False)
+    model=load_model_compat(args.model_h5, custom_objects=custom_objects, compile=False)
     print("got the model")
     model.summary()
     return model

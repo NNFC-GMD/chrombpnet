@@ -1,4 +1,4 @@
-from tensorflow.keras.models import load_model
+from chrombpnet.training.utils.model_io import load_model_compat
 from tensorflow.keras.utils import get_custom_objects
 import argparse
 import tensorflow as tf
@@ -42,8 +42,8 @@ def main(args_chrombpnet_nb, args_bias, args_output_dir):
 	custom_objects={"tf":tf}  
 	get_custom_objects().update(custom_objects)
 
-	chrombpnet_nb=load_model(args_chrombpnet_nb,compile=False)
-	bias_model=load_model(args_bias,compile=False)
+	chrombpnet_nb=load_model_compat(args_chrombpnet_nb, custom_objects=custom_objects, compile=False)
+	bias_model=load_model_compat(args_bias, custom_objects=custom_objects, compile=False)
 		
 	newp = args_output_dir+"/chrombpnet_recompiled.h5"
 	new_chrom = chrombpnet_model(bias_model, chrombpnet_nb)

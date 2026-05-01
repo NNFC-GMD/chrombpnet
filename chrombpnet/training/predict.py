@@ -10,7 +10,7 @@ import chrombpnet.training.utils.losses as losses
 import chrombpnet.training.metrics as metrics
 import chrombpnet.training.data_generators.initializers as initializers
 from tensorflow.keras.utils import get_custom_objects
-from tensorflow.keras.models import load_model
+from chrombpnet.training.utils.model_io import load_model_compat
 #from scipy import nanmean, nanstd
 
 def write_predictions_h5py(output_prefix, profile, logcts, coords):
@@ -55,7 +55,7 @@ def load_model_wrapper(args):
     # read .h5 model
     custom_objects={"tf": tf, "multinomial_nll":losses.multinomial_nll}    
     get_custom_objects().update(custom_objects)    
-    model=load_model(args.model_h5, compile=False)
+    model=load_model_compat(args.model_h5, custom_objects=custom_objects, compile=False)
     print("got the model")
     #model.summary()
     return model
@@ -171,4 +171,3 @@ if __name__=="__main__":
     # read arguments
     args=argmanager.fetch_predict_args()
     main(args)
-

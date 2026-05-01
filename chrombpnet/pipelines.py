@@ -173,12 +173,12 @@ def chrombpnet_qc(args):
 	def load_model_wrapper(model_hdf5):
 		# read .h5 model
 		from tensorflow.keras.utils import get_custom_objects
-		from tensorflow.keras.models import load_model
+		from chrombpnet.training.utils.model_io import load_model_compat
 		import tensorflow as tf
 		import chrombpnet.training.utils.losses as losses
 		custom_objects={"multinomial_nll":losses.multinomial_nll, "tf": tf}    
 		get_custom_objects().update(custom_objects)    
-		model=load_model(model_hdf5, compile=False)
+		model=load_model_compat(model_hdf5, custom_objects=custom_objects, compile=False)
 		model.summary()
 		return model
     
@@ -387,12 +387,12 @@ def bias_model_qc(args):
 	def load_model_wrapper(model_hdf5):
 		# read .h5 model
 		from tensorflow.keras.utils import get_custom_objects
-		from tensorflow.keras.models import load_model
+		from chrombpnet.training.utils.model_io import load_model_compat
 		import tensorflow as tf
 		import chrombpnet.training.utils.losses as losses
 		custom_objects={"multinomial_nll":losses.multinomial_nll, "tf": tf}    
 		get_custom_objects().update(custom_objects)    
-		model=load_model(model_hdf5, compile=False)
+		model=load_model_compat(model_hdf5, custom_objects=custom_objects, compile=False)
 		model.summary()
 		return model
     

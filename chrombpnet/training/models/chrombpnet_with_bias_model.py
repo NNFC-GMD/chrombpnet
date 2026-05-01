@@ -12,11 +12,11 @@ os.environ['PYTHONHASHSEED'] = '0'
 
 
 def load_pretrained_bias(model_hdf5):
-    from tensorflow.keras.models import load_model
+    from chrombpnet.training.utils.model_io import load_model_compat
     from tensorflow.keras.utils import get_custom_objects
     custom_objects={"multinomial_nll":multinomial_nll, "tf":tf}
     get_custom_objects().update(custom_objects)
-    pretrained_bias_model=load_model(model_hdf5, compile=False)
+    pretrained_bias_model=load_model_compat(model_hdf5, custom_objects=custom_objects, compile=False)
     #freeze the model
     num_layers=len(pretrained_bias_model.layers)
     for i in range(num_layers):

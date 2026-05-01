@@ -2,7 +2,7 @@ import numpy as np
 import chrombpnet.training.utils.one_hot as one_hot
 import tensorflow as tf
 from tensorflow.keras.utils import get_custom_objects
-from tensorflow.keras.models import load_model
+from chrombpnet.training.utils.model_io import load_model_compat
 import chrombpnet.training.utils.losses as losses
 
 def filter_edge_regions(peaks_df, bw, width, peaks_bool):
@@ -57,9 +57,9 @@ def get_seqs_cts(genome, bw, peaks_df, input_width=2114, output_width=1000):
 
 def load_model_wrapper(model_h5):
     # read .h5 model
-    custom_objects={"tf": tf, "multinomial_nll":losses.multinomial_nll}    
-    get_custom_objects().update(custom_objects)    
-    model=load_model(model_h5, compile=False)
+    custom_objects={"tf": tf, "multinomial_nll":losses.multinomial_nll}
+    get_custom_objects().update(custom_objects)
+    model=load_model_compat(model_h5, custom_objects=custom_objects, compile=False)
     print("got the model")
     model.summary()
     return model
