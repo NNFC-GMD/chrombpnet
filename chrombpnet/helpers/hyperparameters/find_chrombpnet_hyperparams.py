@@ -8,6 +8,12 @@ from chrombpnet.helpers.hyperparameters import param_utils as param_utils
 from tensorflow import keras
 import json
 
+def layer_output_shape(layer):
+    """Return a layer output shape tuple across Keras 2 and Keras 3."""
+    if hasattr(layer, "output_shape"):
+        return tuple(layer.output_shape)
+    return tuple(layer.output.shape)
+
 def parse_data_args():
     parser=argparse.ArgumentParser(description="find hyper-parameters for chrombpnet defined in src/training/models/chrombpnet_with_bias_model.py")
     parser.add_argument("-g", "--genome", type=str, required=True, help="Genome fasta")
@@ -46,7 +52,7 @@ def adjust_bias_model_logcounts(bias_model, seqs, cts):
     # safeguards to prevent misuse
     #assert(bias_model.layers[-1].name == "logcount_predictions")
     assert(bias_model.layers[-1].name == "logcounts" or bias_model.layers[-1].name == "logcount_predictions")
-    assert(bias_model.layers[-1].output_shape==(None,1))
+    assert(layer_output_shape(bias_model.layers[-1]) == (None, 1))
     assert(isinstance(bias_model.layers[-1], keras.layers.Dense))
 
     print("Predicting within adjust counts")
