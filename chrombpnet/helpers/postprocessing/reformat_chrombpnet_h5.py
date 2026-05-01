@@ -49,7 +49,10 @@ def main(args_chrombpnet_nb, args_bias, args_output_dir):
 	new_chrom = chrombpnet_model(bias_model, chrombpnet_nb)
 	new_chrom.save(newp)
 	newp = args_output_dir+"/chrombpnet_recompiled"
-	new_chrom.save(newp)
+	if hasattr(new_chrom, "export"):
+		new_chrom.export(newp)
+	else:
+		new_chrom.save(newp)
 
 if __name__ == '__main__':
 		
@@ -57,4 +60,3 @@ if __name__ == '__main__':
 		
 
 	
-

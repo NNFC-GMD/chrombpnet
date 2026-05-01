@@ -1,22 +1,30 @@
-from setuptools import setup,find_packages
+from pathlib import Path
+from setuptools import setup, find_packages
 
 
-#generate install_requires from requirements.txt file
-install_requires=open('requirements.txt','r').read().strip().split('\n')
-print(f"install_requires:{install_requires}")
+def read_requirements(path):
+    """Read pip-style requirements while ignoring comments and blank lines."""
+    return [
+        line.strip()
+        for line in Path(path).read_text().splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+install_requires = read_requirements("requirements.txt")
 
 
 config = {
     'name': 'chrombpnet',
     'author_email': 'anusri @ stanford.edu',
     'license': 'MIT',
-    'license_files': ('LICENSE.txt',),
+    'license_files': ('LICENSE',),
     'include_package_data': True,
     'description': 'chrombpnet predicts chromatin accessibility from sequence',
     'download_url': 'https://github.com/kundajelab/chrombpnet',
     'version': '1.0.1',
     'packages': find_packages(),
-    'python_requires': '>=3.8',
+    'python_requires': '>=3.10',
     'install_requires': install_requires,
     'zip_safe': False,
     'scripts':[

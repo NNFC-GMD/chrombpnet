@@ -26,20 +26,21 @@ This section will discuss the packages needed to train a ChromBPNet model. First
 
 ### 1. Running in docker 
 
-Download and install the latest version of Docker for your platform. Here is the link for the installers -<a href="https://docs.docker.com/get-docker/">Docker Installers</a>.  Run the docker run command below to open an environment with all the packages installed and do `cd chrombpnet` to start running the tutorial.
+Download and install the latest version of Docker for your platform. Here is the link for the installers -<a href="https://docs.docker.com/get-docker/">Docker Installers</a>. Build the image from this checkout, then run it to open an environment with all the packages installed and do `cd chrombpnet` to start running the tutorial.
 
 > **Note:**
 > To access your system GPU's from within the docker container, you must have [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) installed on your host machine.
 
 ```
-docker run -it --rm --memory=100g --gpus device=0  kundajelab/chrombpnet:latest
+docker build -t chrombpnet:h100 .
+docker run -it --rm --memory=100g --gpus device=0 chrombpnet:h100
 ```
 
 ### 2. Local installation
 
-Create a clean conda environment with python >=3.8 
+Create a clean conda environment with python >=3.10. For H100 GPUs, use a recent NVIDIA driver and the CUDA 12 TensorFlow build installed by the package requirements.
 ```
-conda create -n chrombpnet python=3.8
+conda create -n chrombpnet python=3.12
 conda activate chrombpnet
 ```
 
@@ -228,5 +229,3 @@ If you're using ChromBPNet in your work, please cite as follows:
 	journal = {bioRxiv}
 }
 ```
-
-

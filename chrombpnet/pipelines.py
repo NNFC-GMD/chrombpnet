@@ -178,7 +178,7 @@ def chrombpnet_qc(args):
 		import chrombpnet.training.utils.losses as losses
 		custom_objects={"multinomial_nll":losses.multinomial_nll, "tf": tf}    
 		get_custom_objects().update(custom_objects)    
-		model=load_model(model_hdf5)
+		model=load_model(model_hdf5, compile=False)
 		model.summary()
 		return model
     
@@ -392,7 +392,7 @@ def bias_model_qc(args):
 		import chrombpnet.training.utils.losses as losses
 		custom_objects={"multinomial_nll":losses.multinomial_nll, "tf": tf}    
 		get_custom_objects().update(custom_objects)    
-		model=load_model(model_hdf5)
+		model=load_model(model_hdf5, compile=False)
 		model.summary()
 		return model
     

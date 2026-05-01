@@ -59,7 +59,7 @@ def load_model_wrapper(model_h5):
     # read .h5 model
     custom_objects={"tf": tf, "multinomial_nll":losses.multinomial_nll}    
     get_custom_objects().update(custom_objects)    
-    model=load_model(model_h5)
+    model=load_model(model_h5, compile=False)
     print("got the model")
     model.summary()
     return model

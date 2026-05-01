@@ -1,8 +1,8 @@
 # Use the official TensorFlow image as parent
-FROM tensorflow/tensorflow:2.8.2-gpu
+FROM tensorflow/tensorflow:2.21.0-gpu
 
-#key signing issue with cuda repo can be fixed by removing from apt sources and re-adding in apt-get update 
-RUN rm /etc/apt/sources.list.d/cuda.list
+# key signing issue with cuda repo can be fixed by removing stale apt sources before apt-get update
+RUN rm -f /etc/apt/sources.list.d/cuda.list /etc/apt/sources.list.d/nvidia-ml.list
 
 # Set the working directory
 WORKDIR /scratch
@@ -20,8 +20,8 @@ RUN cd /opt/ && \
     ./google-cloud-sdk/install.sh
 ENV PATH "$PATH:/opt/google-cloud-sdk/bin/"
 
-# Install Miniconda with Python 3.9 into /opt
-RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linux-x86_64.sh -O ~/miniconda.sh && \
+# Install Miniconda with Python 3.12 into /opt
+RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-py312_26.1.1-1-Linux-x86_64.sh -O ~/miniconda.sh && \
     /bin/bash ~/miniconda.sh -b -p /opt/conda && \
     rm ~/miniconda.sh
 
