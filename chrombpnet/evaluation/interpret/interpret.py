@@ -1,5 +1,7 @@
 # Adapted from chrombpnet-lite
 
+from chrombpnet.training.utils.numpy_compat import patch_numpy_for_deepdish
+patch_numpy_for_deepdish()
 import deepdish as dd
 import json
 import numpy as np
@@ -135,4 +137,3 @@ if __name__ == '__main__':
     # parse the command line arguments
     args = fetch_interpret_args()
     main(args)
-

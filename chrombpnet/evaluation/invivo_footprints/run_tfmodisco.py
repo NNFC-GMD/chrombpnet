@@ -7,6 +7,8 @@ import modisco
 import click
 import pickle as pkl
 import modisco.visualization
+from chrombpnet.training.utils.numpy_compat import patch_numpy_for_deepdish
+patch_numpy_for_deepdish()
 import deepdish
 def import_shap_scores_part2(
     shap_scores_hdf5, peak_table, center_cut_size=None, chrom_set=None,

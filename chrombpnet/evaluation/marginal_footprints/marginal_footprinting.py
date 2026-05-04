@@ -1,6 +1,8 @@
 import pyBigWig
 import pandas as pd
 import numpy as np
+from chrombpnet.training.utils.numpy_compat import patch_numpy_for_deepdish
+patch_numpy_for_deepdish()
 import deepdish as dd
 import os
 import pyfaidx

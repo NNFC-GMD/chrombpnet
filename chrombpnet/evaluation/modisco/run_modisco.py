@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from modisco.visualization import viz_sequence
 from collections import OrderedDict
 import modisco.visualization
+from chrombpnet.training.utils.numpy_compat import patch_numpy_for_deepdish
+patch_numpy_for_deepdish()
 import deepdish
 import h5py
 import numpy as np

@@ -1,6 +1,8 @@
 import argparse
 import pyBigWig
 import numpy as np
+from chrombpnet.training.utils.numpy_compat import patch_numpy_for_deepdish
+patch_numpy_for_deepdish()
 import deepdish
 import chrombpnet.evaluation.make_bigwigs.bigwig_helper as bigwig_helper
 
