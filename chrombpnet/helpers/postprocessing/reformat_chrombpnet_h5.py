@@ -4,7 +4,8 @@ import argparse
 import tensorflow as tf
 import numpy as np
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Cropping1D, add, Conv1D, GlobalAvgPool1D, Dense, Add, Concatenate, Lambda, Flatten
+from tensorflow.keras.layers import Input, Cropping1D, add, Conv1D, GlobalAvgPool1D, Dense, Add, Concatenate, Flatten
+from chrombpnet.training.utils.layers import LogcountSum
 import time
 import os
 import argparse
@@ -32,9 +33,7 @@ def chrombpnet_model(bias_model, bpnet_model_wo_bias):
 
 	profile_out = Add(name="logits_profile_predictions")([output_wo_bias[0],bias_output[0]])
 	concat_counts = Concatenate(axis=-1)([output_wo_bias[1], bias_output[1]])
-	count_out = Lambda(lambda x: tf.math.reduce_logsumexp(x, axis=-1, keepdims=True),
-						output_shape=(1,),
-						name="logcount_predictions")(concat_counts)
+	count_out = LogcountSum(name="logcount_predictions")(concat_counts)
 	model=Model(inputs=[inp],outputs=[profile_out, count_out])
 	return model
     
