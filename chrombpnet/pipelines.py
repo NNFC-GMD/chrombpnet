@@ -118,6 +118,10 @@ def chrombpnet_train_pipeline(args):
 	# separating models from logs
 	os.rename(os.path.join(args.output_dir,"evaluation/{}chrombpnet_nobias_footprints.h5".format(fpx)),os.path.join(args.output_dir,"auxiliary/{}chrombpnet_nobias_footprints.h5".format(fpx)))
 
+	if getattr(args, "skip_shap", False):
+		print("Skipping DeepSHAP, TF-MoDISco, and HTML report generation because --skip-shap was set.")
+		return
+
 	# get contributions scores with model
 	args_copy = copy.deepcopy(args)
 	args_copy.peaks = os.path.join(args.output_dir,"auxiliary/{}filtered.peaks.bed".format(fpx))
