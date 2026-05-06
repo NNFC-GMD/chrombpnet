@@ -28,7 +28,9 @@ OUT=${OUT:-$BASE/chrombpnet_model}
 REGIONS=${REGIONS:-$OUT/auxiliary/filtered.peaks.bed}
 DEEPSHAP_OUT=${DEEPSHAP_OUT:-$OUT/deepshap}
 N_REGIONS=${N_REGIONS:-30000}
-TMP=${TMP:-/tmp/$USER/$SLURM_JOB_ID}
+JOB_USER=${SLURM_JOB_USER:-${USER:-$(whoami)}}
+JOB_ID=${SLURM_JOB_ID:-manual}
+TMP=${TMP:-/tmp/$JOB_USER/$JOB_ID}
 SYNC_INTERVAL_SECONDS=${SYNC_INTERVAL_SECONDS:-900}
 SYNC_PID=""
 

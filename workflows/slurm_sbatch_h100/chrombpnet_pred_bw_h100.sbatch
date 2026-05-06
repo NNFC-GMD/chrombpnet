@@ -34,7 +34,9 @@ OBSERVED_BW=${OBSERVED_BW:-$OUT/auxiliary/data_unstranded.bw}
 PRED_OUT=${PRED_OUT:-$OUT/pred_bw}
 TRACK_PREFIX=${TRACK_PREFIX:-head}
 BATCH_SIZE=${BATCH_SIZE:-64}
-TMP=${TMP:-/tmp/$USER/$SLURM_JOB_ID}
+JOB_USER=${SLURM_JOB_USER:-${USER:-$(whoami)}}
+JOB_ID=${SLURM_JOB_ID:-manual}
+TMP=${TMP:-/tmp/$JOB_USER/$JOB_ID}
 
 cleanup() {
   local status=$?

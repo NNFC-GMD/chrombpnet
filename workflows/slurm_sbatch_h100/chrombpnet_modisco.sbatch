@@ -24,7 +24,9 @@ WINDOW=${WINDOW:-500}
 RUN_PROFILE=${RUN_PROFILE:-1}
 RUN_COUNTS=${RUN_COUNTS:-1}
 MOTIF_MEME=${MOTIF_MEME:-$(print_meme_motif_file)}
-TMP=${TMP:-/tmp/$USER/$SLURM_JOB_ID}
+JOB_USER=${SLURM_JOB_USER:-${USER:-$(whoami)}}
+JOB_ID=${SLURM_JOB_ID:-manual}
+TMP=${TMP:-/tmp/$JOB_USER/$JOB_ID}
 
 cleanup() {
   local status=$?

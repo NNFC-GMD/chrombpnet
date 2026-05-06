@@ -83,16 +83,14 @@ python -m pip install --no-deps -e /dcai/users/mateug/git/chrombpnet
 Then submit:
 
 ```bash
-sbatch --export=SHAP_ENV=/dcai/users/mateug/envs/chrombpnet-shap \
-  workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
+sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
 ```
 
 The DeepSHAP and MoDISco scripts request 64 GB by default. If a full run runs
 out of memory, resubmit with a larger Slurm memory request, for example:
 
 ```bash
-sbatch --mem=96G --export=SHAP_ENV=/dcai/users/mateug/envs/chrombpnet-shap \
-  workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
+sbatch --mem=96G --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
 ```
 
 If Slurm holds the job with `user env retrieval failed requeued held`, cancel
@@ -101,9 +99,21 @@ the held job and submit again without exporting the full login environment:
 ```bash
 scancel JOBID
 unset SBATCH_GET_USER_ENV SBATCH_EXPORT SLURM_EXPORT_ENV
-sbatch --export=N_REGIONS=1000,SHAP_ENV=/dcai/users/mateug/envs/chrombpnet-shap \
-  workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
+sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
 ```
+
+For a small DeepSHAP smoke test on clusters where variable export triggers
+user-env retrieval, make a temporary script with fewer regions:
+
+```bash
+cp workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch /tmp/deepshap_smoke.sbatch
+sed -i 's/N_REGIONS=${N_REGIONS:-30000}/N_REGIONS=1000/' /tmp/deepshap_smoke.sbatch
+sbatch --export=NIL /tmp/deepshap_smoke.sbatch
+```
+
+The sbatch scripts derive their temporary directory from `SLURM_JOB_USER` and
+`SLURM_JOB_ID`, so they also work when `--export=NIL` strips login variables
+such as `USER`.
 
 Run MoDISco after DeepSHAP creates `profile_scores.h5` and `counts_scores.h5`:
 
@@ -114,6 +124,6 @@ sbatch workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch
 Useful overrides:
 
 ```bash
-sbatch --export=N_REGIONS=1000,SHAP_ENV=/dcai/users/mateug/envs/chrombpnet-shap workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
-sbatch --export=RUN_COUNTS=0 workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch
+sbatch --mem=96G --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
+sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch
 ```
