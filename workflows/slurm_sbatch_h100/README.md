@@ -57,6 +57,27 @@ conda env create -p /dcai/users/mateug/envs/chrombpnet-shap \
 
 conda activate /dcai/users/mateug/envs/chrombpnet-shap
 python -m pip install --no-deps -e /dcai/users/mateug/git/chrombpnet
+
+python - <<'PY'
+import numpy as np
+import IPython
+import tensorflow as tf
+import pyBigWig
+import shap
+print("NumPy", np.__version__)
+print("IPython", IPython.__version__)
+print("TensorFlow", tf.__version__)
+print("pyBigWig OK")
+print("SHAP OK")
+PY
+```
+
+If pip upgraded NumPy during environment creation, repair the existing env with:
+
+```bash
+conda activate /dcai/users/mateug/envs/chrombpnet-shap
+python -m pip install --force-reinstall --no-cache-dir "numpy==1.26.4" "ipython<9"
+python -m pip install --no-deps -e /dcai/users/mateug/git/chrombpnet
 ```
 
 Then submit:

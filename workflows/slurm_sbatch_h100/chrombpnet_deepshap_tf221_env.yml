@@ -16,6 +16,8 @@ dependencies:
   - pyfaidx=0.6.1
   - pytables>=3.9
   - pip:
+      - "numpy==1.26.4"
+      - "ipython<9"
       - "tensorflow[and-cuda]==2.21.0"
       - "keras>=3.12.0,<4"
       - "protobuf>=6.31.1,<8.0.0"
