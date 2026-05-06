@@ -19,7 +19,7 @@ sbatch workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch
 track lives somewhere else, override it at submit time:
 
 ```bash
-sbatch --export=ALL,OBSERVED_BW=/path/to/head.bw,TRACK_PREFIX=head \
+sbatch --export=OBSERVED_BW=/path/to/head.bw,TRACK_PREFIX=head \
   workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch
 ```
 
@@ -83,7 +83,7 @@ python -m pip install --no-deps -e /dcai/users/mateug/git/chrombpnet
 Then submit:
 
 ```bash
-sbatch --export=ALL,SHAP_ENV=/dcai/users/mateug/envs/chrombpnet-shap \
+sbatch --export=SHAP_ENV=/dcai/users/mateug/envs/chrombpnet-shap \
   workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
 ```
 
@@ -91,7 +91,17 @@ The DeepSHAP and MoDISco scripts request 64 GB by default. If a full run runs
 out of memory, resubmit with a larger Slurm memory request, for example:
 
 ```bash
-sbatch --mem=96G --export=ALL,SHAP_ENV=/dcai/users/mateug/envs/chrombpnet-shap \
+sbatch --mem=96G --export=SHAP_ENV=/dcai/users/mateug/envs/chrombpnet-shap \
+  workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
+```
+
+If Slurm holds the job with `user env retrieval failed requeued held`, cancel
+the held job and submit again without exporting the full login environment:
+
+```bash
+scancel JOBID
+unset SBATCH_GET_USER_ENV SBATCH_EXPORT SLURM_EXPORT_ENV
+sbatch --export=N_REGIONS=1000,SHAP_ENV=/dcai/users/mateug/envs/chrombpnet-shap \
   workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
 ```
 
@@ -104,6 +114,6 @@ sbatch workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch
 Useful overrides:
 
 ```bash
-sbatch --export=ALL,N_REGIONS=1000 workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
-sbatch --export=ALL,RUN_COUNTS=0 workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch
+sbatch --export=N_REGIONS=1000,SHAP_ENV=/dcai/users/mateug/envs/chrombpnet-shap workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
+sbatch --export=RUN_COUNTS=0 workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch
 ```
