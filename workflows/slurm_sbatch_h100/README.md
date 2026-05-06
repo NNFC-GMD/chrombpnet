@@ -110,14 +110,14 @@ unset SBATCH_GET_USER_ENV SBATCH_EXPORT SLURM_EXPORT_ENV
 sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
 ```
 
-The sbatch scripts derive their temporary directory from `SLURM_JOB_USER` and
-`SLURM_JOB_ID`, so they also work when `--export=NIL` strips login variables
-such as `USER`.
+The sbatch scripts default their temporary directory to
+`/tmp/mateug/<job_id>`, so they also work when `--export=NIL` strips login
+variables such as `USER`.
 
 Run MoDISco after DeepSHAP creates `profile_scores.h5` and `counts_scores.h5`:
 
 ```bash
-sbatch workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch
+sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch
 ```
 
 Useful overrides:

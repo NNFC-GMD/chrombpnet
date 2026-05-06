@@ -8,7 +8,6 @@
 #SBATCH --output=/dcai/users/mateug/logs/chrombpnet.modisco.%j.out
 #SBATCH --error=/dcai/users/mateug/logs/chrombpnet.modisco.%j.err
 
-MODISCO_ENV=/dcai/users/mateug/envs/chrombpnet-h100
 BASE=/dcai/users/mateug/chrombpnet_tutorial
 OUT=""
 SCORES_PREFIX=""
@@ -25,7 +24,6 @@ usage() {
 Usage: sbatch --export=NIL chrombpnet_modisco.sbatch [options]
 
 Options:
-  --modisco-env PATH    Conda env path for MoDISco.
   --base PATH           Tutorial/project base directory.
   --out PATH            ChromBPNet model output directory.
   --scores-prefix PATH  Prefix for DeepSHAP score files.
@@ -42,7 +40,6 @@ EOF
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --modisco-env) MODISCO_ENV="$2"; shift 2 ;;
     --base) BASE="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
     --scores-prefix) SCORES_PREFIX="$2"; shift 2 ;;
@@ -59,7 +56,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 source /dcai/software/tenant/apps/Miniconda3/25.7.0-2/etc/profile.d/conda.sh
-conda activate "$MODISCO_ENV"
+conda activate /dcai/users/mateug/envs/chrombpnet-h100
 
 set -euo pipefail
 
@@ -69,9 +66,7 @@ OUT=${OUT:-$BASE/chrombpnet_model}
 SCORES_PREFIX=${SCORES_PREFIX:-$OUT/deepshap/chrombpnet_nobias}
 MODISCO_OUT=${MODISCO_OUT:-$OUT/modisco}
 MOTIF_MEME=${MOTIF_MEME:-$(print_meme_motif_file)}
-JOB_USER=${SLURM_JOB_USER:-${USER:-$(whoami)}}
-JOB_ID=${SLURM_JOB_ID:-manual}
-TMP=${TMP:-/tmp/$JOB_USER/$JOB_ID}
+TMP=${TMP:-/tmp/mateug/${SLURM_JOB_ID:-manual}}
 
 cleanup() {
   local status=$?

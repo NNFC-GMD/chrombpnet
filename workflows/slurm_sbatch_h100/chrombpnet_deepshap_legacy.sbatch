@@ -9,7 +9,6 @@
 #SBATCH --output=/dcai/users/mateug/logs/chrombpnet.deepshap.%j.out
 #SBATCH --error=/dcai/users/mateug/logs/chrombpnet.deepshap.%j.err
 
-SHAP_ENV=/dcai/users/mateug/envs/chrombpnet-shap
 BASE=/dcai/users/mateug/chrombpnet_tutorial
 IN=""
 OUT=""
@@ -24,7 +23,6 @@ usage() {
 Usage: sbatch --export=NIL chrombpnet_deepshap_legacy.sbatch [options]
 
 Options:
-  --shap-env PATH       Conda env path for DeepSHAP.
   --base PATH           Tutorial/project base directory.
   --in PATH             Input downloads directory with hg38 files.
   --out PATH            ChromBPNet model output directory.
@@ -39,7 +37,6 @@ EOF
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --shap-env) SHAP_ENV="$2"; shift 2 ;;
     --base) BASE="$2"; shift 2 ;;
     --in) IN="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
@@ -54,7 +51,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 source /dcai/software/tenant/apps/Miniconda3/25.7.0-2/etc/profile.d/conda.sh
-conda activate "$SHAP_ENV"
+conda activate /dcai/users/mateug/envs/chrombpnet-shap
 
 export LD_LIBRARY_PATH=$(
   find "${CONDA_PREFIX}"/lib/python*/site-packages/nvidia -type d -name lib 2>/dev/null \
@@ -70,9 +67,7 @@ IN=${IN:-$BASE/data/downloads}
 OUT=${OUT:-$BASE/chrombpnet_model}
 REGIONS=${REGIONS:-$OUT/auxiliary/filtered.peaks.bed}
 DEEPSHAP_OUT=${DEEPSHAP_OUT:-$OUT/deepshap}
-JOB_USER=${SLURM_JOB_USER:-${USER:-$(whoami)}}
-JOB_ID=${SLURM_JOB_ID:-manual}
-TMP=${TMP:-/tmp/$JOB_USER/$JOB_ID}
+TMP=${TMP:-/tmp/mateug/${SLURM_JOB_ID:-manual}}
 SYNC_PID=""
 
 sync_outputs() {

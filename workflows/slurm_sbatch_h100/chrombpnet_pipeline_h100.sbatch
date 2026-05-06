@@ -42,9 +42,7 @@ IN=$BASE/data/downloads
 DATA=$BASE/data
 BIAS=$BASE/bias_model
 OUT=$BASE/chrombpnet_model
-JOB_USER=${SLURM_JOB_USER:-${USER:-$(whoami)}}
-JOB_ID=${SLURM_JOB_ID:-manual}
-TMP=/tmp/$JOB_USER/$JOB_ID
+TMP=/tmp/mateug/${SLURM_JOB_ID:-manual}
 SYNC_INTERVAL_SECONDS=600
 SYNC_PID=""
 

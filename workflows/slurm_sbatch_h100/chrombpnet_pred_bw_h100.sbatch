@@ -9,7 +9,6 @@
 #SBATCH --output=/dcai/users/mateug/logs/chrombpnet.pred_bw.%j.out
 #SBATCH --error=/dcai/users/mateug/logs/chrombpnet.pred_bw.%j.err
 
-H100_ENV=/dcai/users/mateug/envs/chrombpnet-h100
 BASE=/dcai/users/mateug/chrombpnet_tutorial
 IN=""
 OUT=""
@@ -26,7 +25,6 @@ usage() {
 Usage: sbatch --export=NIL chrombpnet_pred_bw_h100.sbatch [options]
 
 Options:
-  --h100-env PATH       Conda env path for TensorFlow/H100 prediction.
   --base PATH           Tutorial/project base directory.
   --in PATH             Input downloads directory with hg38 files.
   --out PATH            ChromBPNet model output directory.
@@ -43,7 +41,6 @@ EOF
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    --h100-env) H100_ENV="$2"; shift 2 ;;
     --base) BASE="$2"; shift 2 ;;
     --in) IN="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
@@ -60,7 +57,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 source /dcai/software/tenant/apps/Miniconda3/25.7.0-2/etc/profile.d/conda.sh
-conda activate "$H100_ENV"
+conda activate /dcai/users/mateug/envs/chrombpnet-h100
 
 export LD_LIBRARY_PATH=$(
   find "${CONDA_PREFIX}"/lib/python*/site-packages/nvidia -type d -name lib 2>/dev/null \
@@ -81,9 +78,7 @@ OUT=${OUT:-$BASE/chrombpnet_model}
 REGIONS=${REGIONS:-$OUT/auxiliary/filtered.peaks.bed}
 OBSERVED_BW=${OBSERVED_BW:-$OUT/auxiliary/data_unstranded.bw}
 PRED_OUT=${PRED_OUT:-$OUT/pred_bw}
-JOB_USER=${SLURM_JOB_USER:-${USER:-$(whoami)}}
-JOB_ID=${SLURM_JOB_ID:-manual}
-TMP=${TMP:-/tmp/$JOB_USER/$JOB_ID}
+TMP=${TMP:-/tmp/mateug/${SLURM_JOB_ID:-manual}}
 
 cleanup() {
   local status=$?
