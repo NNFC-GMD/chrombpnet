@@ -23,6 +23,29 @@ sbatch --export=ALL,OBSERVED_BW=/path/to/head.bw,TRACK_PREFIX=head \
   workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch
 ```
 
+## H100 Environment Snapshot
+
+`chrombpnet-h100.full.yml` and `chrombpnet-h100.pip-freeze.txt` are snapshots
+of the working H100 training/prediction environment. They intentionally include
+TensorFlow 2.21 and NumPy 2.4, so this is not the DeepSHAP environment.
+
+To recreate the same H100 environment at the exported cluster path:
+
+```bash
+conda env create -f workflows/slurm_sbatch_h100/chrombpnet-h100.full.yml
+
+conda activate /dcai/users/mateug/envs/chrombpnet-h100
+cd /dcai/users/mateug/git/chrombpnet
+git checkout h100-support
+git pull --ff-only
+python -m pip install --no-deps -e .
+```
+
+The `pip-freeze` file is for auditing exact resolved packages. Prefer the
+editable install command above over installing directly from the freeze file,
+because the freeze captures a Git revision for `chrombpnet` while active
+development is happening on the `h100-support` branch.
+
 DeepSHAP is intentionally split into a separate job because the legacy
 `kundajelab-shap` stack is fragile with NumPy 2 and newer IPython. Use a
 separate interpretation environment. This environment keeps TensorFlow 2.21 but
