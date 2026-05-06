@@ -11,7 +11,7 @@ OUT=$BASE/chrombpnet_model
 Submit the prediction bigWig job with the H100 TensorFlow environment:
 
 ```bash
-sbatch workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch
+sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch
 ```
 
 `chrombpnet_pred_bw_h100.sbatch` defaults `OBSERVED_BW` to
@@ -19,8 +19,9 @@ sbatch workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch
 track lives somewhere else, override it at submit time:
 
 ```bash
-sbatch --export=OBSERVED_BW=/path/to/head.bw,TRACK_PREFIX=head \
-  workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch
+sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch \
+  --observed-bw /path/to/head.bw \
+  --track-prefix head
 ```
 
 ## H100 Environment Snapshot
@@ -86,6 +87,13 @@ Then submit:
 sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
 ```
 
+For a small DeepSHAP smoke test:
+
+```bash
+sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch \
+  --n-regions 1000
+```
+
 The DeepSHAP and MoDISco scripts request 64 GB by default. If a full run runs
 out of memory, resubmit with a larger Slurm memory request, for example:
 
@@ -102,15 +110,6 @@ unset SBATCH_GET_USER_ENV SBATCH_EXPORT SLURM_EXPORT_ENV
 sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
 ```
 
-For a small DeepSHAP smoke test on clusters where variable export triggers
-user-env retrieval, make a temporary script with fewer regions:
-
-```bash
-cp workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch /tmp/deepshap_smoke.sbatch
-sed -i 's/N_REGIONS=${N_REGIONS:-30000}/N_REGIONS=1000/' /tmp/deepshap_smoke.sbatch
-sbatch --export=NIL /tmp/deepshap_smoke.sbatch
-```
-
 The sbatch scripts derive their temporary directory from `SLURM_JOB_USER` and
 `SLURM_JOB_ID`, so they also work when `--export=NIL` strips login variables
 such as `USER`.
@@ -124,6 +123,7 @@ sbatch workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch
 Useful overrides:
 
 ```bash
-sbatch --mem=96G --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
-sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch
+sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch --no-observed-bw
+sbatch --mem=96G --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch --n-regions 30000
+sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch --run-counts 0
 ```

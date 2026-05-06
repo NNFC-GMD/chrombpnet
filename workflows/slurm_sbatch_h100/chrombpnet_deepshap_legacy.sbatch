@@ -9,8 +9,52 @@
 #SBATCH --output=/dcai/users/mateug/logs/chrombpnet.deepshap.%j.out
 #SBATCH --error=/dcai/users/mateug/logs/chrombpnet.deepshap.%j.err
 
+SHAP_ENV=/dcai/users/mateug/envs/chrombpnet-shap
+BASE=/dcai/users/mateug/chrombpnet_tutorial
+IN=""
+OUT=""
+REGIONS=""
+DEEPSHAP_OUT=""
+N_REGIONS=30000
+TMP=""
+SYNC_INTERVAL_SECONDS=900
+
+usage() {
+  cat <<'EOF'
+Usage: sbatch --export=NIL chrombpnet_deepshap_legacy.sbatch [options]
+
+Options:
+  --shap-env PATH       Conda env path for DeepSHAP.
+  --base PATH           Tutorial/project base directory.
+  --in PATH             Input downloads directory with hg38 files.
+  --out PATH            ChromBPNet model output directory.
+  --regions BED         BED regions to interpret.
+  --deepshap-out PATH   Persistent DeepSHAP output directory.
+  --n-regions N         Number of regions to sample. Use 0 for all regions.
+  --tmp PATH            Node-local temp directory.
+  --sync-interval SEC   Periodic sync interval.
+  -h, --help            Show this message.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --shap-env) SHAP_ENV="$2"; shift 2 ;;
+    --base) BASE="$2"; shift 2 ;;
+    --in) IN="$2"; shift 2 ;;
+    --out) OUT="$2"; shift 2 ;;
+    --regions) REGIONS="$2"; shift 2 ;;
+    --deepshap-out) DEEPSHAP_OUT="$2"; shift 2 ;;
+    --n-regions) N_REGIONS="$2"; shift 2 ;;
+    --tmp) TMP="$2"; shift 2 ;;
+    --sync-interval) SYNC_INTERVAL_SECONDS="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
 source /dcai/software/tenant/apps/Miniconda3/25.7.0-2/etc/profile.d/conda.sh
-conda activate "${SHAP_ENV:-/dcai/users/mateug/envs/chrombpnet-shap}"
+conda activate "$SHAP_ENV"
 
 export LD_LIBRARY_PATH=$(
   find "${CONDA_PREFIX}"/lib/python*/site-packages/nvidia -type d -name lib 2>/dev/null \
@@ -22,16 +66,13 @@ set -euo pipefail
 
 mkdir -p /dcai/users/mateug/logs
 
-BASE=${BASE:-/dcai/users/mateug/chrombpnet_tutorial}
 IN=${IN:-$BASE/data/downloads}
 OUT=${OUT:-$BASE/chrombpnet_model}
 REGIONS=${REGIONS:-$OUT/auxiliary/filtered.peaks.bed}
 DEEPSHAP_OUT=${DEEPSHAP_OUT:-$OUT/deepshap}
-N_REGIONS=${N_REGIONS:-30000}
 JOB_USER=${SLURM_JOB_USER:-${USER:-$(whoami)}}
 JOB_ID=${SLURM_JOB_ID:-manual}
 TMP=${TMP:-/tmp/$JOB_USER/$JOB_ID}
-SYNC_INTERVAL_SECONDS=${SYNC_INTERVAL_SECONDS:-900}
 SYNC_PID=""
 
 sync_outputs() {

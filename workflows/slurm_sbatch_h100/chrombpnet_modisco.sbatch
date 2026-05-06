@@ -8,21 +8,66 @@
 #SBATCH --output=/dcai/users/mateug/logs/chrombpnet.modisco.%j.out
 #SBATCH --error=/dcai/users/mateug/logs/chrombpnet.modisco.%j.err
 
+MODISCO_ENV=/dcai/users/mateug/envs/chrombpnet-h100
+BASE=/dcai/users/mateug/chrombpnet_tutorial
+OUT=""
+SCORES_PREFIX=""
+MODISCO_OUT=""
+MAX_SEQLETS=50000
+WINDOW=500
+RUN_PROFILE=1
+RUN_COUNTS=1
+MOTIF_MEME=""
+TMP=""
+
+usage() {
+  cat <<'EOF'
+Usage: sbatch --export=NIL chrombpnet_modisco.sbatch [options]
+
+Options:
+  --modisco-env PATH    Conda env path for MoDISco.
+  --base PATH           Tutorial/project base directory.
+  --out PATH            ChromBPNet model output directory.
+  --scores-prefix PATH  Prefix for DeepSHAP score files.
+  --modisco-out PATH    Persistent MoDISco output directory.
+  --max-seqlets N       Maximum seqlets for modisco motifs.
+  --window N            Window size for modisco motifs.
+  --run-profile 0|1     Run profile MoDISco.
+  --run-counts 0|1      Run counts MoDISco.
+  --motif-meme PATH     Motif MEME database for reports.
+  --tmp PATH            Node-local temp directory.
+  -h, --help            Show this message.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --modisco-env) MODISCO_ENV="$2"; shift 2 ;;
+    --base) BASE="$2"; shift 2 ;;
+    --out) OUT="$2"; shift 2 ;;
+    --scores-prefix) SCORES_PREFIX="$2"; shift 2 ;;
+    --modisco-out) MODISCO_OUT="$2"; shift 2 ;;
+    --max-seqlets) MAX_SEQLETS="$2"; shift 2 ;;
+    --window) WINDOW="$2"; shift 2 ;;
+    --run-profile) RUN_PROFILE="$2"; shift 2 ;;
+    --run-counts) RUN_COUNTS="$2"; shift 2 ;;
+    --motif-meme) MOTIF_MEME="$2"; shift 2 ;;
+    --tmp) TMP="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
 source /dcai/software/tenant/apps/Miniconda3/25.7.0-2/etc/profile.d/conda.sh
-conda activate "${MODISCO_ENV:-/dcai/users/mateug/envs/chrombpnet-h100}"
+conda activate "$MODISCO_ENV"
 
 set -euo pipefail
 
 mkdir -p /dcai/users/mateug/logs
 
-BASE=${BASE:-/dcai/users/mateug/chrombpnet_tutorial}
 OUT=${OUT:-$BASE/chrombpnet_model}
 SCORES_PREFIX=${SCORES_PREFIX:-$OUT/deepshap/chrombpnet_nobias}
 MODISCO_OUT=${MODISCO_OUT:-$OUT/modisco}
-MAX_SEQLETS=${MAX_SEQLETS:-50000}
-WINDOW=${WINDOW:-500}
-RUN_PROFILE=${RUN_PROFILE:-1}
-RUN_COUNTS=${RUN_COUNTS:-1}
 MOTIF_MEME=${MOTIF_MEME:-$(print_meme_motif_file)}
 JOB_USER=${SLURM_JOB_USER:-${USER:-$(whoami)}}
 JOB_ID=${SLURM_JOB_ID:-manual}

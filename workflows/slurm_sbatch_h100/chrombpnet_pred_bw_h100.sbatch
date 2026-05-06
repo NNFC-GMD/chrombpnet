@@ -9,8 +9,58 @@
 #SBATCH --output=/dcai/users/mateug/logs/chrombpnet.pred_bw.%j.out
 #SBATCH --error=/dcai/users/mateug/logs/chrombpnet.pred_bw.%j.err
 
+H100_ENV=/dcai/users/mateug/envs/chrombpnet-h100
+BASE=/dcai/users/mateug/chrombpnet_tutorial
+IN=""
+OUT=""
+REGIONS=""
+OBSERVED_BW=""
+USE_OBSERVED=1
+PRED_OUT=""
+TRACK_PREFIX=head
+BATCH_SIZE=64
+TMP=""
+
+usage() {
+  cat <<'EOF'
+Usage: sbatch --export=NIL chrombpnet_pred_bw_h100.sbatch [options]
+
+Options:
+  --h100-env PATH       Conda env path for TensorFlow/H100 prediction.
+  --base PATH           Tutorial/project base directory.
+  --in PATH             Input downloads directory with hg38 files.
+  --out PATH            ChromBPNet model output directory.
+  --regions BED         BED regions for prediction.
+  --observed-bw BW      Observed head/count bigWig for metrics.
+  --no-observed-bw      Skip observed-track metrics.
+  --pred-out PATH       Persistent prediction output directory.
+  --track-prefix NAME   Prefix for generated prediction tracks.
+  --batch-size N        Prediction batch size.
+  --tmp PATH            Node-local temp directory.
+  -h, --help            Show this message.
+EOF
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --h100-env) H100_ENV="$2"; shift 2 ;;
+    --base) BASE="$2"; shift 2 ;;
+    --in) IN="$2"; shift 2 ;;
+    --out) OUT="$2"; shift 2 ;;
+    --regions) REGIONS="$2"; shift 2 ;;
+    --observed-bw) OBSERVED_BW="$2"; USE_OBSERVED=1; shift 2 ;;
+    --no-observed-bw) USE_OBSERVED=0; shift ;;
+    --pred-out) PRED_OUT="$2"; shift 2 ;;
+    --track-prefix) TRACK_PREFIX="$2"; shift 2 ;;
+    --batch-size) BATCH_SIZE="$2"; shift 2 ;;
+    --tmp) TMP="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
 source /dcai/software/tenant/apps/Miniconda3/25.7.0-2/etc/profile.d/conda.sh
-conda activate /dcai/users/mateug/envs/chrombpnet-h100
+conda activate "$H100_ENV"
 
 export LD_LIBRARY_PATH=$(
   find "${CONDA_PREFIX}"/lib/python*/site-packages/nvidia -type d -name lib 2>/dev/null \
@@ -26,14 +76,11 @@ export CUDA_CACHE_PATH=/dcai/users/mateug/.cache/cuda
 export CUDA_CACHE_MAXSIZE=2147483648
 mkdir -p "$CUDA_CACHE_PATH"
 
-BASE=${BASE:-/dcai/users/mateug/chrombpnet_tutorial}
 IN=${IN:-$BASE/data/downloads}
 OUT=${OUT:-$BASE/chrombpnet_model}
 REGIONS=${REGIONS:-$OUT/auxiliary/filtered.peaks.bed}
 OBSERVED_BW=${OBSERVED_BW:-$OUT/auxiliary/data_unstranded.bw}
 PRED_OUT=${PRED_OUT:-$OUT/pred_bw}
-TRACK_PREFIX=${TRACK_PREFIX:-head}
-BATCH_SIZE=${BATCH_SIZE:-64}
 JOB_USER=${SLURM_JOB_USER:-${USER:-$(whoami)}}
 JOB_ID=${SLURM_JOB_ID:-manual}
 TMP=${TMP:-/tmp/$JOB_USER/$JOB_ID}
@@ -74,7 +121,7 @@ cp "$OUT/models/chrombpnet.h5" "$TMP/models/"
 cp "$OUT/models/chrombpnet_nobias.h5" "$TMP/models/"
 
 observed_arg=()
-if [ -n "${OBSERVED_BW:-}" ]; then
+if [ "$USE_OBSERVED" -eq 1 ]; then
   cp "$OBSERVED_BW" "$TMP/data/observed_head.bw"
   observed_arg=(-bw "$TMP/data/observed_head.bw")
 fi
