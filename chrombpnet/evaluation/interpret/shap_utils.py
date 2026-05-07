@@ -4,6 +4,7 @@
 import numpy as np
 import shap
 import tensorflow as tf
+from tensorflow.keras.layers import Lambda
 
 from deeplift.dinuc_shuffle import dinuc_shuffle
 
@@ -58,28 +59,39 @@ def shuffle_several_times(s,numshuffles=20):
         return [np.array([dinuc_shuffle(s[0]) for i in range(numshuffles)])]
 
 
-def get_weightedsum_meannormed_logits(model):
-    # Assumes the 0 task track is for profile
-    # See Google slide deck for explanations
-    # We meannorm as per section titled 
-    # "Adjustments for Softmax Layers" in the DeepLIFT paper
-    meannormed_logits = (model.outputs[0] - \
-                         tf.reduce_mean(model.outputs[0], axis=1)[:, None])
+def _sum_last_axis(x):
+    return tf.reduce_sum(x, axis=-1)
+
+
+def get_counts_output(model):
+    return Lambda(_sum_last_axis,
+                  output_shape=(),
+                  name="shap_sum_logcount_predictions")(model.outputs[1])
+
+
+def _weightedsum_meannormed_logits(logits):
+    meannormed_logits = logits - tf.reduce_mean(logits, axis=1, keepdims=True)
 
     # 'stop_gradient' will prevent importance from being propagated
     # through this operation; we do this because we just want to treat
-    # the post-softmax probabilities as 'weights' on the different 
+    # the post-softmax probabilities as 'weights' on the different
     # logits, without having the network explain how the probabilities
     # themselves were derived. Could be worth contrasting explanations
     # derived with and without stop_gradient enabled...
     stopgrad_meannormed_logits = tf.stop_gradient(meannormed_logits)
     softmax_out = tf.nn.softmax(stopgrad_meannormed_logits, axis=1)
-    
+
     # Weight the logits according to the softmax probabilities, take
     # the sum for each example. This mirrors what was done for the
     # bpnet paper.
-    weightedsum_meannormed_logits = tf.reduce_sum(softmax_out * \
-                                                  meannormed_logits,
-                                                  axis=1)
-    
-    return weightedsum_meannormed_logits
+    return tf.reduce_sum(softmax_out * meannormed_logits, axis=1)
+
+
+def get_weightedsum_meannormed_logits(model):
+    # Assumes the 0 task track is for profile
+    # See Google slide deck for explanations
+    # We meannorm as per section titled 
+    # "Adjustments for Softmax Layers" in the DeepLIFT paper
+    return Lambda(_weightedsum_meannormed_logits,
+                  output_shape=(),
+                  name="shap_weightedsum_meannormed_logits")(model.outputs[0])

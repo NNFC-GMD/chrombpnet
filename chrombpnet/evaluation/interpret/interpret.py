@@ -62,7 +62,7 @@ def interpret(model, seqs, output_prefix, profile_or_counts):
 
     if "counts" in profile_or_counts:
         profile_model_counts_explainer = shap.explainers.deep.TFDeepExplainer(
-            (counts_model_input, tf.reduce_sum(model.outputs[1], axis=-1)),
+            (counts_model_input, shap_utils.get_counts_output(model)),
             shap_utils.shuffle_several_times,
             combine_mult_and_diffref=shap_utils.combine_mult_and_diffref)
 
