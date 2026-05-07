@@ -11,7 +11,7 @@ OUT=$BASE/chrombpnet_model
 Submit the prediction bigWig job with the H100 TensorFlow environment:
 
 ```bash
-sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch
+sbatch workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch
 ```
 
 `chrombpnet_pred_bw_h100.sbatch` defaults `OBSERVED_BW` to
@@ -19,7 +19,7 @@ sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch
 track lives somewhere else, override it at submit time:
 
 ```bash
-sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch \
+sbatch workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch \
   --observed-bw /path/to/head.bw \
   --track-prefix head
 ```
@@ -84,13 +84,13 @@ python -m pip install --no-deps -e /dcai/users/mateug/git/chrombpnet
 Then submit:
 
 ```bash
-sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
+sbatch workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
 ```
 
 For a small DeepSHAP smoke test:
 
 ```bash
-sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch \
+sbatch workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch \
   --n-regions 1000
 ```
 
@@ -98,32 +98,22 @@ The DeepSHAP and MoDISco scripts request 64 GB by default. If a full run runs
 out of memory, resubmit with a larger Slurm memory request, for example:
 
 ```bash
-sbatch --mem=96G --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
-```
-
-If Slurm holds the job with `user env retrieval failed requeued held`, cancel
-the held job and submit again without exporting the full login environment:
-
-```bash
-scancel JOBID
-unset SBATCH_GET_USER_ENV SBATCH_EXPORT SLURM_EXPORT_ENV
-sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
+sbatch --mem=96G workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch
 ```
 
 The sbatch scripts default their temporary directory to
-`/tmp/mateug/<job_id>`, so they also work when `--export=NIL` strips login
-variables such as `USER`.
+`/tmp/mateug/<job_id>`.
 
 Run MoDISco after DeepSHAP creates `profile_scores.h5` and `counts_scores.h5`:
 
 ```bash
-sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch
+sbatch workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch
 ```
 
 Useful overrides:
 
 ```bash
-sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch --no-observed-bw
-sbatch --mem=96G --export=NIL workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch --n-regions 30000
-sbatch --export=NIL workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch --run-counts 0
+sbatch workflows/slurm_sbatch_h100/chrombpnet_pred_bw_h100.sbatch --no-observed-bw
+sbatch --mem=96G workflows/slurm_sbatch_h100/chrombpnet_deepshap_legacy.sbatch --n-regions 30000
+sbatch workflows/slurm_sbatch_h100/chrombpnet_modisco.sbatch --run-counts 0
 ```

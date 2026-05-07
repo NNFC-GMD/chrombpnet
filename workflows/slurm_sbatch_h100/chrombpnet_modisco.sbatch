@@ -21,7 +21,7 @@ TMP=""
 
 usage() {
   cat <<'EOF'
-Usage: sbatch --export=NIL chrombpnet_modisco.sbatch [options]
+Usage: sbatch chrombpnet_modisco.sbatch [options]
 
 Options:
   --base PATH           Tutorial/project base directory.

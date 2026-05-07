@@ -22,7 +22,7 @@ TMP=""
 
 usage() {
   cat <<'EOF'
-Usage: sbatch --export=NIL chrombpnet_pred_bw_h100.sbatch [options]
+Usage: sbatch chrombpnet_pred_bw_h100.sbatch [options]
 
 Options:
   --base PATH           Tutorial/project base directory.

@@ -20,7 +20,7 @@ SYNC_INTERVAL_SECONDS=900
 
 usage() {
   cat <<'EOF'
-Usage: sbatch --export=NIL chrombpnet_deepshap_legacy.sbatch [options]
+Usage: sbatch chrombpnet_deepshap_legacy.sbatch [options]
 
 Options:
   --base PATH           Tutorial/project base directory.
