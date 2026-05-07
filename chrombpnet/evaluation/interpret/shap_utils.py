@@ -9,6 +9,22 @@ from tensorflow.keras.layers import Lambda
 from deeplift.dinuc_shuffle import dinuc_shuffle
 
 
+def create_tf1_session():
+    config = tf.compat.v1.ConfigProto()
+    config.gpu_options.allow_growth = True
+    return tf.compat.v1.Session(config=config)
+
+
+def require_tf_graph_tensor(tensor, tensor_name):
+    if not hasattr(tensor, "op"):
+        raise RuntimeError(
+            "DeepSHAP requires TensorFlow graph tensors from legacy tf.keras. "
+            "Set TF_USE_LEGACY_KERAS=1 before importing TensorFlow and install "
+            "tf-keras==2.21.0 in the DeepSHAP environment. "
+            "{} is a {} instead.".format(tensor_name, type(tensor).__name__)
+        )
+
+
 def combine_mult_and_diffref(mult, orig_inp, bg_data):
     to_return = []
     

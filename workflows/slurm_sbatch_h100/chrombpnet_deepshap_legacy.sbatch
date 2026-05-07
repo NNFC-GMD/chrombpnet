@@ -53,6 +53,9 @@ done
 source /dcai/software/tenant/apps/Miniconda3/25.7.0-2/etc/profile.d/conda.sh
 conda activate /dcai/users/mateug/envs/chrombpnet-shap
 
+# kundajelab-shap expects TensorFlow graph tensors and TF1-style session APIs.
+export TF_USE_LEGACY_KERAS=1
+
 export LD_LIBRARY_PATH=$(
   find "${CONDA_PREFIX}"/lib/python*/site-packages/nvidia -type d -name lib 2>/dev/null \
     | paste -sd:

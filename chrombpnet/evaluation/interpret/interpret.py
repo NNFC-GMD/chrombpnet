@@ -50,7 +50,7 @@ def generate_shap_dict(seqs, scores):
 
     return d
 
-def interpret(model, seqs, output_prefix, profile_or_counts):
+def interpret(model, seqs, output_prefix, profile_or_counts, session):
     print("Seqs dimension : {}".format(seqs.shape))
 
     outlen = model.output_shape[0][1]
@@ -61,9 +61,13 @@ def interpret(model, seqs, output_prefix, profile_or_counts):
     counts_input = seqs
 
     if "counts" in profile_or_counts:
+        shap_utils.require_tf_graph_tensor(counts_model_input, "counts model input")
+        counts_output = shap_utils.get_counts_output(model)
+        shap_utils.require_tf_graph_tensor(counts_output, "counts model output")
         profile_model_counts_explainer = shap.explainers.deep.TFDeepExplainer(
-            (counts_model_input, shap_utils.get_counts_output(model)),
+            (counts_model_input, counts_output),
             shap_utils.shuffle_several_times,
+            session=session,
             combine_mult_and_diffref=shap_utils.combine_mult_and_diffref)
 
         print("Generating 'counts' shap scores")
@@ -81,10 +85,13 @@ def interpret(model, seqs, output_prefix, profile_or_counts):
         del counts_shap_scores, counts_scores_dict
 
     if "profile" in profile_or_counts:
+        shap_utils.require_tf_graph_tensor(profile_model_input, "profile model input")
         weightedsum_meannormed_logits = shap_utils.get_weightedsum_meannormed_logits(model)
+        shap_utils.require_tf_graph_tensor(weightedsum_meannormed_logits, "profile model output")
         profile_model_profile_explainer = shap.explainers.deep.TFDeepExplainer(
             (profile_model_input, weightedsum_meannormed_logits),
             shap_utils.shuffle_several_times,
+            session=session,
             combine_mult_and_diffref=shap_utils.combine_mult_and_diffref)
 
         print("Generating 'profile' shap scores")
@@ -115,23 +122,28 @@ def main(args):
     if args.debug_chr:
         regions_df = regions_df[regions_df['chr'].isin(args.debug_chr)]
     
-    model = input_utils.load_model_wrapper(args)
+    session = shap_utils.create_tf1_session()
+    try:
+        with session.as_default():
+            model = input_utils.load_model_wrapper(args)
  
-    # infer input length
-    inputlen = model.input_shape[1] # if bias model (1 input only)
-    print("inferred model inputlen: ", inputlen)
+            # infer input length
+            inputlen = model.input_shape[1] # if bias model (1 input only)
+            print("inferred model inputlen: ", inputlen)
 
-    # load sequences
-    # NOTE: it will pull out sequences of length inputlen
-    #       centered at the summit (start + 10th column) and peaks used after filtering
+            # load sequences
+            # NOTE: it will pull out sequences of length inputlen
+            #       centered at the summit (start + 10th column) and peaks used after filtering
 
-    genome = pyfaidx.Fasta(args.genome)
-    seqs, peaks_used = input_utils.get_seq(regions_df, genome, inputlen)
-    genome.close()
+            genome = pyfaidx.Fasta(args.genome)
+            seqs, peaks_used = input_utils.get_seq(regions_df, genome, inputlen)
+            genome.close()
 
-    regions_df[peaks_used].to_csv("{}.interpreted_regions.bed".format(args.output_prefix), header=False, index=False, sep='\t')
+            regions_df[peaks_used].to_csv("{}.interpreted_regions.bed".format(args.output_prefix), header=False, index=False, sep='\t')
 
-    interpret(model, seqs, args.output_prefix, args.profile_or_counts)
+            interpret(model, seqs, args.output_prefix, args.profile_or_counts, session)
+    finally:
+        session.close()
 
 if __name__ == '__main__':
     # parse the command line arguments
