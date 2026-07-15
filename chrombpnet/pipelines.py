@@ -12,13 +12,15 @@ def chrombpnet_train_pipeline(args):
 		fpx = args.file_prefix+"_"
 	else:
 		fpx = ""
-		
-	# Shift bam and convert to bigwig
-	import chrombpnet.helpers.preprocessing.reads_to_bigwig as reads_to_bigwig	
-	args.output_prefix = os.path.join(args.output_dir,"auxiliary/{}data".format(fpx))
-	args.plus_shift = None
-	args.minus_shift = None
-	reads_to_bigwig.main(args)
+
+	if args.bigwig is None:
+		# Shift bam and convert to bigwig
+		import chrombpnet.helpers.preprocessing.reads_to_bigwig as reads_to_bigwig	
+		args.output_prefix = os.path.join(args.output_dir,"auxiliary/{}data".format(fpx))
+		args.plus_shift = None
+		args.minus_shift = None
+		reads_to_bigwig.main(args)
+		args.bigwig = os.path.join(args.output_dir,"auxiliary/{}data_unstranded.bw".format(fpx))
 	
 	# QC bigwig
 	import chrombpnet.helpers.preprocessing.analysis.build_pwm_from_bigwig as build_pwm_from_bigwig	
