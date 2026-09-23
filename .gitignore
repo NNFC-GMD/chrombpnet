@@ -14,3 +14,18 @@ experimental_scripts
 tracks
 needs_cleanup
 old
+
+# Environments / tooling
+.pixi/*
+!.pixi/config.toml
+.venv/
+.scratch/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Small committed test fixtures
+!tests/data/**/*.json
+!tests/data/**/*.npz
+!/conda-pypi-map.json
