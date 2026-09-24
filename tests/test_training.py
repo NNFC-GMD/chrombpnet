@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 import chrombpnet  # noqa: F401  (sets KERAS_BACKEND=jax before keras is imported)
+import jax
 import keras
 import matplotlib
 
@@ -178,6 +179,38 @@ def test_opt_ins_muon_cosine_bf16(data, tmp_path):
     # saved in float32 so that predict / interpret run it in full precision
     assert {layer.dtype_policy.name for layer in model.layers} == {"float32"}
     assert np.isfinite(pd.read_csv(args.output_prefix + ".log")["val_loss"]).all()
+
+
+def test_precision_highest_is_restored(data, tmp_path):
+    assert jax.config.jax_default_matmul_precision is None
+    args = train_bias(data, tmp_path / "bias_highest", precision="highest", epochs=1)
+    saved = json.load(open(args.output_prefix + ".args.json"))
+    assert saved["runtime"]["jax_default_matmul_precision"] == "highest"
+    # restored for the next pipeline steps (predict, interpret) and later runs in the same process
+    assert jax.config.jax_default_matmul_precision is None
+
+
+class Interrupted(Exception):
+    pass
+
+
+def test_interrupted_bf16_run_leaves_a_float32_checkpoint(data, tmp_path, monkeypatch):
+    class InterruptAfterFirstEpoch(LossHistory):
+        # runs after the ModelCheckpoint callback, as a time limit hit during epoch 2 would
+        def on_epoch_end(self, epoch, logs=None):
+            super().on_epoch_end(epoch, logs)
+            assert self.model.get_layer("bpnet_1conv").compute_dtype == "bfloat16"  # still training in bf16
+            raise Interrupted()
+
+    monkeypatch.setattr(train.callbacks, "LossHistory", InterruptAfterFirstEpoch)
+    out = tmp_path / "bias_bf16_interrupted"
+    with pytest.raises(Interrupted):
+        train_bias(data, out, precision="bf16")
+    assert keras.config.dtype_policy().name == "float32"
+    model = model_io.load_model(str(out) + ".h5")  # the epoch-1 checkpoint, not a final save
+    policies = {layer.dtype_policy.name for layer in model._flatten_layers(include_self=True, recursive=True)}
+    assert policies == {"float32"}
+    assert model.get_layer("bpnet_1conv").compute_dtype == "float32"
 
 
 def test_generator_contract(data):

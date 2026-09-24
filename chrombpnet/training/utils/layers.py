@@ -45,7 +45,8 @@ class LogSumExpCompat(LogSumExp):
 
     Passed to load_model as custom_objects={"Lambda": LogSumExpCompat}. It never unmarshals the stored bytecode
     (which only loads on the Python version that wrote it). Any other Lambda is refused rather than silently
-    replaced.
+    replaced. from_config returns a plain LogSumExp, so a loaded 1.x model re-saves as `chrombpnet>LogSumExp`
+    and loads again.
     """
 
     @classmethod
@@ -60,4 +61,4 @@ class LogSumExpCompat(LogSumExp):
                 "(see chrombpnet.training.utils.layers).".format(name))
         for key in _LAMBDA_ONLY_KEYS:
             config.pop(key, None)
-        return cls(**config)
+        return LogSumExp(**config)

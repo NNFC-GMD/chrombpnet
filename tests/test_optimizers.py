@@ -1,5 +1,9 @@
 """make_optimizer (Adam / ChromBPNetMuon, EMA, cosine schedule) and the runtime precision/device helpers."""
+import json
 import math
+import os
+import subprocess
+import sys
 import types
 
 import numpy as np
@@ -166,6 +170,12 @@ def test_configure_precision():
     try:
         assert runtime.configure_precision("highest") == "highest"
         assert jax.config.jax_default_matmul_precision == "highest"
+        # 'default' resets a 'highest' left by an earlier run in the same process
+        assert runtime.configure_precision("default") == "default"
+        assert jax.config.jax_default_matmul_precision is None
+        runtime.configure_precision("highest")
+        assert runtime.configure_precision(None) == "default"
+        assert jax.config.jax_default_matmul_precision is None
     finally:
         jax.config.update("jax_default_matmul_precision", None)
     previous = keras.config.dtype_policy()
@@ -182,14 +192,72 @@ def test_configure_precision():
 
 
 def test_assert_gpu_if_requested():
+    jax.devices()  # the backends exist in this process: 'auto' reports them
     backend = runtime.assert_gpu_if_requested("auto")
     assert backend == jax.default_backend()
+    assert runtime.assert_gpu_if_requested("auto", initialize=True) == backend
     with pytest.raises(ValueError):
         runtime.assert_gpu_if_requested("tpu")
     if jax.default_backend() == "cpu":
         with pytest.raises(RuntimeError, match="--device gpu"):
             runtime.assert_gpu_if_requested("gpu")
         assert runtime.assert_gpu_if_requested("cpu") == "cpu"
+
+
+DEVICE_CHILD = """
+import json, sys
+import chrombpnet
+from jax._src import xla_bridge
+from chrombpnet.training import runtime
+before = xla_bridge.backends_are_initialized()
+result = runtime.assert_gpu_if_requested(sys.argv[1])
+state = {"before": before, "result": result, "after": xla_bridge.backends_are_initialized(),
+         "clients": sorted(xla_bridge._backends)}
+import jax
+state["platforms"] = jax.config.jax_platforms
+state["default_backend"] = jax.default_backend()
+print("STATE " + json.dumps(state))
+"""
+
+
+def device_check_in_fresh_process(device):
+    env = {k: v for k, v in os.environ.items() if k != "JAX_PLATFORMS"}
+    proc = subprocess.run([sys.executable, "-c", DEVICE_CHILD, device], capture_output=True, text=True, env=env,
+                          timeout=300)
+    assert proc.returncode == 0, proc.stderr
+    line = [x for x in proc.stdout.splitlines() if x.startswith("STATE ")][-1]
+    return json.loads(line[len("STATE "):]), proc.stdout
+
+
+def test_device_cpu_restricts_jax_before_any_backend_exists():
+    # --device cpu must not create the CUDA client (a context on every visible GPU): only the CPU one
+    state, stdout = device_check_in_fresh_process("cpu")
+    assert state["before"] is False
+    assert state["result"] == "cpu" and state["platforms"] == "cpu"
+    assert state["clients"] == ["cpu"] and state["default_backend"] == "cpu"
+    assert "jax backend: cpu" in stdout
+
+
+def test_device_cpu_after_a_gpu_backend_exists(monkeypatch):
+    # too late for jax_platforms: fall back to making the CPU the default device, with a warning
+    monkeypatch.setattr(runtime, "backends_initialized", lambda: True)
+    monkeypatch.setattr(jax, "default_backend", lambda: "gpu")
+    platforms, default_device = jax.config.jax_platforms, jax.config.jax_default_device
+    try:
+        with pytest.warns(UserWarning, match="initialised already"):
+            assert runtime.assert_gpu_if_requested("cpu") == "cpu"
+        assert jax.config.jax_default_device == jax.devices("cpu")[0]
+        assert jax.config.jax_platforms == platforms
+    finally:
+        jax.config.update("jax_default_device", default_device)
+
+
+def test_device_auto_does_not_create_backends():
+    # the CLI checks --device before hours of preprocessing: 'auto' leaves the backends to the first model
+    state, stdout = device_check_in_fresh_process("auto")
+    assert state["before"] is False and state["after"] is False
+    assert state["result"] is None and state["platforms"] is None
+    assert "first use" in stdout
 
 
 @pytest.mark.gpu

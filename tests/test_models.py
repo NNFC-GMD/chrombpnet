@@ -188,3 +188,23 @@ def test_bf16_keeps_heads_and_bias_float32(bias_h5, tmp_path):
         keras.config.set_dtype_policy(previous)
     loaded = model_io.load_model(str(tmp_path / "m_nobias.h5"))
     assert {layer.dtype_policy.name for layer in loaded.layers} == {"float32"}
+
+
+def test_float32_policy_context_restores_training_policies(bias_h5, tmp_path):
+    # what the bf16 ModelCheckpoint does at each save: float32 file, then back to the per-layer bf16 policies
+    previous = keras.config.dtype_policy()
+    try:
+        runtime.configure_precision("bf16")
+        model = chrombpnet_with_bias_model.getModelGivenModelOptionsAndWeightInits(
+            legacy_args(), model_params(bias_model_path=bias_h5))
+    finally:
+        keras.config.set_dtype_policy(previous)
+    all_layers = lambda m: m._flatten_layers(include_self=True, recursive=True)
+    before = [(layer.name, layer.dtype_policy.name) for layer in all_layers(model)]
+    assert {"mixed_bfloat16", "float32"} <= {name for _, name in before}
+    with runtime.float32_policy(model):
+        assert {layer.dtype_policy.name for layer in all_layers(model)} == {"float32"}
+        model.save(str(tmp_path / "checkpoint.h5"))
+    assert [(layer.name, layer.dtype_policy.name) for layer in all_layers(model)] == before
+    loaded = model_io.load_model(str(tmp_path / "checkpoint.h5"))
+    assert {layer.dtype_policy.name for layer in all_layers(loaded)} == {"float32"}
