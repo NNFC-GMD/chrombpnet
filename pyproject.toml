@@ -104,6 +104,7 @@ chrombpnet = { path = ".", editable = true }
 
 [tool.pixi.activation.env]
 KERAS_BACKEND = "jax"
+XLA_PYTHON_CLIENT_PREALLOCATE = "false"
 
 [tool.pixi.tasks]
 versions = '''python -c "import jax, keras, chrombpnet; print('keras', keras.__version__, keras.backend.backend(), '| jax', jax.__version__, jax.devices())"'''

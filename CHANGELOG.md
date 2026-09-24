@@ -18,8 +18,10 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
 - `modisco` >= 2.5.2 (tfmodisco-lite) replaces modisco-lite. The reports call `modisco report-simple`, because
   `modisco report` writes a different report in 2.5.
 - The Docker image is rebuilt on debian:trixie-slim with pixi (`Dockerfile`; CUDA from the JAX wheels). It is
-  published to `ghcr.io/nnfc-gmd/chrombpnet` instead of Docker Hub `kundajelab/chrombpnet`. New GitHub Actions CI
-  checks the lock files, runs the CPU tests on Linux and macOS, runs lint, and tests a uv-only install.
+  published to `ghcr.io/nnfc-gmd/chrombpnet` instead of Docker Hub `kundajelab/chrombpnet`. It ignores a host
+  `PYTHONPATH`/`PYTHONHOME` and the `~/.local` user site (`PYTHONNOUSERSITE=1`), which Apptainer would otherwise
+  pass in; the Apptainer examples also use `--cleanenv`. New GitHub Actions CI checks the lock files, runs the CPU
+  tests on Linux and macOS, runs lint, and tests a uv-only install.
 - Job templates for SLURM GPU clusters (`workflows/slurm/`) and molab GPU sessions (`workflows/molab/`).
 
 ### Interpretation
@@ -32,6 +34,9 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
   unseeded, so old and new scores agree statistically, not exactly.
 - Contribution-score files keep the 1.x layout: `/raw/seq` int8, `/shap/seq` and `/projected_shap/seq` float16,
   all (N, 4, L), Blosc-compressed. h5py + hdf5plugin now write them instead of deepdish.
+- DeepSHAP picks its batch size (unless `--shap-batch-seqs` is given) from the model size and the free GPU
+  memory. JAX releases nothing until the process ends, so in `chrombpnet pipeline` that memory stays reserved
+  through the TF-MoDISco step. On a shared GPU, set `XLA_PYTHON_CLIENT_MEM_FRACTION`.
 
 ### Behaviour changes
 - EarlyStopping restores the weights of the best epoch even when training runs all `--epochs` without stopping
@@ -42,7 +47,30 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
 - New model files (`bias.h5`, `bias_model_scaled.h5`, `chrombpnet.h5`, `chrombpnet_nobias.h5`) keep their names
   but are written by Keras 3, so chrombpnet 1.x and TensorFlow 2.x cannot load them. chrombpnet 1.x models still
   load in 2.x: on load, a registered `LogSumExp` layer replaces the logsumexp `Lambda` of `chrombpnet.h5`.
-- JAX allocates GPU memory on demand: `XLA_PYTHON_CLIENT_PREALLOCATE=false` unless you set it yourself.
+- JAX allocates GPU memory on demand: importing chrombpnet sets `XLA_PYTHON_CLIENT_PREALLOCATE=false` unless you
+  set it yourself. The pixi environments (so `gpu-check` too) and the Docker image also set it; under `pixi run`
+  the environment's value wins over an `export`.
+- `bpnet_model.py` and `chrombpnet_with_bias_model.py` are no longer installed on `PATH`. `-a` defaults to the
+  packaged files, so only scripts that pass `-a $(which chrombpnet_with_bias_model.py)` need changing. Locate the
+  files with `python -c 'import chrombpnet.training.models.chrombpnet_with_bias_model as m; print(m.__file__)'`
+  (or `...models.bpnet_model`).
+- `reformat_chrombpnet_h5` writes only `chrombpnet_recompiled.h5`. The TensorFlow SavedModel export
+  (`chrombpnet_recompiled/`) was dropped.
+- `find_chrombpnet_hyperparams` draws the nonpeak subsample for the outlier thresholds with `--seed` (in
+  `chrombpnet pipeline` / `train`; run standalone, it has no `--seed` and stays unseeded). The thresholds
+  (`counts_sum_min/max_thresh`), `counts_loss_weight` and the filtered peak/nonpeak BEDs are reproducible, and
+  they differ from those of any single 1.x run.
+- Counts-head DeepSHAP of a full `chrombpnet.h5` is refused, because its counts output is a logsumexp of the
+  bias and no-bias counts. 1.x wrote `counts_scores.h5` for it. Use `chrombpnet_nobias.h5` (as the pipelines do),
+  or `-pc profile`.
+- The reads used for Tn5/DNase shift estimation are a seeded uniform sample instead of an unseeded `shuf -n`.
+  The pipelines use the fixed seed 1234, and `-s/--seed` sets it on `reads_to_bigwig` and `auto_shift_detect`.
+  GNU `shuf` is no longer needed.
+- Gzipped fragment/tagAlign inputs are decompressed in Python instead of by `zcat`. A truncated or corrupt `.gz`
+  now fails loudly. It used to silently yield a shift estimate and bigWig built from the reads before the damage.
+- TF-MoDISco for the profile and counts heads of `bias pipeline` / `bias qc` still runs one head after the
+  other, as in 1.x. Its numba threads follow `NUMBA_NUM_THREADS` if set, otherwise the job's CPUs
+  (`SLURM_CPUS_PER_TASK`, else the CPU affinity mask).
 - Removed: the legacy modisco-0.5 scripts (`evaluation/modisco/{run_modisco,fetch_tomtom,visualize_motif_matches}.py`,
   `modisco.sh`) and `evaluation/invivo_footprints/`.
 
@@ -52,6 +80,13 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
 - Interpretation: `--interpret-subsample` (default 30000), `--shap-seed` (default 1234), `--shap-batch-seqs`,
   `--shap-precision {highest,default}`.
 - MoDISco: `--modisco-max-seqlets` (default 50000), `--modisco-window` (default 500), `--tomtom-lite`.
+- Preprocessing helpers: `-s/--seed` (default 1234) on `python -m chrombpnet.helpers.preprocessing.reads_to_bigwig`
+  and `... auto_shift_detect`, for the reads sampled for shift estimation.
+
+### Known issues (pre-existing in 1.x)
+- `chrombpnet qc` and `chrombpnet bias qc` read `auxiliary/filtered*.bed` (e.g. `filtered.peaks.bed`,
+  `filtered.bias_peaks.bed`) from the output directory they create, so they fail with `FileNotFoundError`
+  unless those files are copied there from the training run.
 
 ##  Version - 1.5
 - Fixed issue #150, regions_used not found while generating bigwigs from impotance h5s
