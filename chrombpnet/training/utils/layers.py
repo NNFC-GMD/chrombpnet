@@ -22,7 +22,7 @@ class LogSumExp(keras.layers.Layer):
 _LAMBDA_ONLY_KEYS = ("function", "output_shape", "mask", "arguments", "module", "function_type",
                      "output_shape_type", "output_shape_module")
 
-# Name of the function the count-head Lambda of `chrombpnet export --legacy-h5` files refers to
+# Name of the function the count-head Lambda of `chrombpnet export --legacy-h5 --count-head named` files refers to
 # (function_type "function"): TF-Keras 2.x resolves it through custom_objects, chrombpnet maps it to LogSumExp.
 LOGSUMEXP_LAMBDA_FUNCTION = "chrombpnet_logsumexp"
 
@@ -60,10 +60,10 @@ class LogSumExpCompat(LogSumExp):
     """Stand-in for the logsumexp Lambda inside chrombpnet 1.x `chrombpnet.h5` files.
 
     Passed to load_model as custom_objects={"Lambda": LogSumExpCompat}. It never unmarshals the stored bytecode
-    (which only loads on the Python version that wrote it). It also accepts the Lambda of files written by
-    `chrombpnet export --legacy-h5`, which names the function (function_type "function",
-    function LOGSUMEXP_LAMBDA_FUNCTION) instead of storing bytecode. Any other Lambda is refused rather than
-    silently replaced. from_config returns a plain LogSumExp, so a loaded 1.x model re-saves as
+    (which only loads on the Python version that wrote it). `chrombpnet export --legacy-h5` files carry the same
+    Lambda, or with `--count-head named` one that names the function (function_type "function", function
+    LOGSUMEXP_LAMBDA_FUNCTION) instead of storing bytecode, which is accepted too. Any other Lambda is refused
+    rather than silently replaced. from_config returns a plain LogSumExp, so a loaded 1.x model re-saves as
     `chrombpnet>LogSumExp` and loads again.
     """
 

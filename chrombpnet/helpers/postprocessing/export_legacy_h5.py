@@ -25,10 +25,19 @@ warning). Layers with weights keep their names, so every weight keeps its name. 
 bpnet-lite, which takes the number of dilated layers from the largest number at the end of any layer name
 (`add_7` in a 4-layer model would make it look for `bpnet_7conv`).
 
-The count head of a full chrombpnet model (the registered `LogSumExp` layer) is written as a Keras 2 `Lambda`
-that refers to a function by name (`function_type: "function"`, `function: "chrombpnet_logsumexp"`) instead of
-marshalled Python bytecode, which only loads on the Python version that wrote it. TF-Keras resolves that name
-through `custom_objects`::
+The count head of a full chrombpnet model (the registered `LogSumExp` layer) is a Keras 2 `Lambda`, in one of two
+forms (`count_head`, CLI `--count-head`):
+
+* "bytecode" (the default): the `Lambda` of the chrombpnet 1.x `chrombpnet.h5` files, verbatim. It stores
+  `lambda x: tf.math.reduce_logsumexp(x, axis=-1, keepdims=True)` as Python 3.8 marshalled bytecode
+  (`function_type: "lambda"`, module `chrombpnet.training.models.chrombpnet_with_bias_model`). TF-Keras
+  unmarshals it on Python 3.8 - 3.10 (tested: TF 2.8 on 3.9, TF 2.12 on 3.10), which covers chrombpnet 1.x and
+  the kundajelab variant-scorer: their `load_model(path, compile=False)` calls (custom_objects `multinomial_nll`
+  and `tf` only, or none) load the file unchanged. Python >= 3.11 cannot unmarshal it
+  (`ValueError: bad marshal data`).
+* "named": for TF-Keras readers on Python >= 3.11. A `Lambda` that names its function
+  (`function_type: "function"`, `function: "chrombpnet_logsumexp"`), which TF-Keras resolves through
+  `custom_objects` (without it, loading fails with `AttributeError: 'NoneType' object has no attribute 'get'`)::
 
     import tensorflow as tf
 
@@ -38,9 +47,11 @@ through `custom_objects`::
     model = tf.keras.models.load_model("chrombpnet.legacy.h5", compile=False,
                                        custom_objects={"chrombpnet_logsumexp": chrombpnet_logsumexp})
 
-(or `tf.keras.utils.get_custom_objects()["chrombpnet_logsumexp"] = chrombpnet_logsumexp` before loading). Bias
-and no-bias models have no Lambda and load without custom objects. chrombpnet's own `model_io.load_model` reads
-all of these files. bpnet-lite reads only the weight datasets of bias / no-bias files.
+  (or `tf.keras.utils.get_custom_objects()["chrombpnet_logsumexp"] = chrombpnet_logsumexp` before loading).
+
+Bias and no-bias models have no Lambda and load without custom objects. chrombpnet's own `model_io.load_model`
+reads all of these files (both count-head forms, without unmarshalling anything). bpnet-lite reads only the weight
+datasets of bias / no-bias files.
 """
 import json
 import os
@@ -61,6 +72,16 @@ from chrombpnet.training.utils.layers import LOGSUMEXP_LAMBDA_FUNCTION, LogSumEx
 
 LEGACY_KERAS_VERSION = "2.12.0"   # the TF-Keras version that wrote the chrombpnet 1.x reference files
 LEGACY_BACKEND = "tensorflow"
+
+# The count-head Lambda of the chrombpnet 1.x chrombpnet.h5 files (TF-Keras 2.12 on Python 3.8), verbatim:
+# `lambda x: tf.math.reduce_logsumexp(x, axis=-1, keepdims=True)` as base64 marshalled Python 3.8 bytecode
+LEGACY_LOGSUMEXP_BYTECODE = (
+    "4wEAAAAAAAAAAAAAAAEAAAAFAAAAUwAAAHMSAAAAdABqAWoCfABkAWQCZAONA1MAKQRO6f////9U\n"
+    "KQLaBGF4aXPaCGtlZXBkaW1zKQPaAnRm2gRtYXRo2hByZWR1Y2VfbG9nc3VtZXhwKQHaAXipAHII\n"
+    "AAAA+kgvb3B0L2Nocm9tYnBuZXQvY2hyb21icG5ldC90cmFpbmluZy9tb2RlbHMvY2hyb21icG5l\n"
+    "dF93aXRoX2JpYXNfbW9kZWwucHnaCDxsYW1iZGE+gAAAAPMAAAAA\n")
+LEGACY_LOGSUMEXP_MODULE = "chrombpnet.training.models.chrombpnet_with_bias_model"
+COUNT_HEADS = ("bytecode", "named")   # the default first
 
 # Keras 2 initializers and the config keys TF-Keras 2.x accepts for them
 _INITIALIZER_KEYS = {
@@ -88,6 +109,19 @@ _LAYER_KEYS = {
 # weightless layers whose Keras auto-names (class name in snake case) are renumbered per model
 _RENUMBERED = (keras.layers.Add, keras.layers.Concatenate, keras.layers.Cropping1D, keras.layers.Flatten,
                keras.layers.GlobalAveragePooling1D)
+
+
+def logsumexp_lambda_fields(count_head="bytecode"):
+    """The Lambda config keys of the exported count head after name / trainable / dtype, in TF-Keras 2.12's
+    order: the 1.x bytecode Lambda ("bytecode") or the named-function one ("named"), see the module docstring."""
+    if count_head == "bytecode":
+        function, function_type, module = [LEGACY_LOGSUMEXP_BYTECODE, None, None], "lambda", LEGACY_LOGSUMEXP_MODULE
+    elif count_head == "named":
+        function, function_type, module = LOGSUMEXP_LAMBDA_FUNCTION, "function", None
+    else:
+        raise ValueError("count_head must be one of {}, got {!r}.".format(", ".join(COUNT_HEADS), count_head))
+    return {"function": function, "function_type": function_type, "module": module, "output_shape": None,
+            "output_shape_type": "raw", "output_shape_module": None, "arguments": {}}
 
 
 def _native(value):
@@ -172,8 +206,9 @@ def export_model_name(model, normalize=True):
 
 
 class _Exporter:
-    def __init__(self, normalize_names=True):
+    def __init__(self, normalize_names=True, count_head="bytecode"):
         self.normalize = normalize_names
+        self.count_head_fields = logsumexp_lambda_fields(count_head)
 
     # ---- model_config ----
 
@@ -234,10 +269,8 @@ class _Exporter:
             return "Functional", self.functional_config(layer, name)
         base = {"name": name, "trainable": bool(layer.trainable), "dtype": _layer_dtype(layer)}
         if isinstance(layer, LogSumExp):
-            # a named function instead of marshalled bytecode, see the module docstring
-            return "Lambda", dict(base, function=LOGSUMEXP_LAMBDA_FUNCTION, function_type="function", module=None,
-                                  output_shape=None, output_shape_type="raw", output_shape_module=None,
-                                  arguments={})
+            # the 1.x bytecode Lambda or a named-function one, see the module docstring
+            return "Lambda", dict(base, **self.count_head_fields)
         for cls, keys in _LAYER_KEYS.items():
             if type(layer) is cls:
                 break
@@ -293,9 +326,9 @@ class _Exporter:
                 for owner, variable in train + frozen]
 
 
-def write_legacy_h5(model, out_path, normalize_names=True):
+def write_legacy_h5(model, out_path, normalize_names=True, count_head="bytecode"):
     """Write `model` (a Keras 3 functional model) to `out_path` in the TF-Keras 2.x full-model layout."""
-    exporter = _Exporter(normalize_names)
+    exporter = _Exporter(normalize_names, count_head)
     model_name = export_model_name(model, normalize_names)
     model_config = {"class_name": "Functional", "config": exporter.functional_config(model, model_name)}
     names = _legacy_names(model.layers, normalize_names)
@@ -327,10 +360,16 @@ def write_legacy_h5(model, out_path, normalize_names=True):
     return out_path
 
 
-def export_legacy_h5(model_or_path, out_path, normalize_names=True):
+def export_legacy_h5(model_or_path, out_path, normalize_names=True, count_head="bytecode"):
     """Export a bias / chrombpnet / chrombpnet_nobias model (a Keras 3 model, or a path to any .h5 / .keras file
     `model_io.load_model` reads) as a TF-Keras 2.x full-model .h5 file. The file is written next to `out_path`
-    and moved into place when complete. Returns `out_path`."""
+    and moved into place when complete. Returns `out_path`.
+
+    count_head: how the count head of a full chrombpnet model is written, "bytecode" (the default: the 1.x
+    Lambda, which TF-Keras loads on Python 3.8 - 3.10 without custom objects) or "named" (for TF-Keras on
+    Python >= 3.11, which then needs custom_objects={"chrombpnet_logsumexp": ...}); see the module docstring.
+    """
+    logsumexp_lambda_fields(count_head)   # refuse a bad value before loading anything
     if isinstance(model_or_path, (str, os.PathLike)):
         from chrombpnet.training.utils.model_io import load_model
         model = load_model(str(model_or_path), compile=False)
@@ -339,7 +378,7 @@ def export_legacy_h5(model_or_path, out_path, normalize_names=True):
     out_path = str(out_path)
     tmp_path = out_path + ".tmp"
     try:
-        write_legacy_h5(model, tmp_path, normalize_names)
+        write_legacy_h5(model, tmp_path, normalize_names, count_head)
         os.replace(tmp_path, out_path)
     finally:
         if os.path.exists(tmp_path):

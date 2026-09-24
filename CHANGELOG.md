@@ -79,17 +79,19 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
   `modisco.sh`) and `evaluation/invivo_footprints/`.
 
 ### New command
-- `chrombpnet export -m model.(h5|keras) -o out.h5 [--legacy-h5]` writes a bias, chrombpnet or chrombpnet_nobias
-  model as a TF-Keras 2.x full-model .h5 file, in the layout chrombpnet 1.x wrote (TF-Keras 2.12): Keras 2
-  `model_config`, `model_weights/<layer>/<layer>/kernel:0` datasets with the `layer_names` / `weight_names`
-  attributes, nested bias / no-bias models stored as in 1.x `chrombpnet.h5`. Keras 3 auto-generated names are
-  written as TF-Keras named them (`functional` -> `model`, `add_4` ... -> `add` ...). TF-Keras 2.x (tested with
-  TF 2.8 and 2.12, `load_model(..., compile=False)`) and bpnet-lite's `BPNet.from_chrombpnet` /
-  `ChromBPNet.from_chrombpnet` read these files; 1.x files re-exported this way have the same datasets, attributes
-  and model config. There is no `training_config` or optimizer state. The count head of a full chrombpnet model is a
-  `Lambda` that names its function instead of storing Python bytecode, so TF-Keras needs
-  `custom_objects={"chrombpnet_logsumexp": ...}` for it (see `chrombpnet/helpers/postprocessing/README.md`);
-  `model_io.load_model` maps it to `LogSumExp`.
+- `chrombpnet export -m model.(h5|keras) -o out.h5 [--legacy-h5] [--count-head {bytecode,named}]` writes a bias,
+  chrombpnet or chrombpnet_nobias model as a TF-Keras 2.x full-model .h5 file, in the layout chrombpnet 1.x wrote
+  (TF-Keras 2.12): Keras 2 `model_config`, `model_weights/<layer>/<layer>/kernel:0` datasets with the
+  `layer_names` / `weight_names` attributes, nested bias / no-bias models stored as in 1.x `chrombpnet.h5`. Keras 3
+  auto-generated names are written as TF-Keras named them (`functional` -> `model`, `add_4` ... -> `add` ...).
+  TF-Keras 2.x (tested with TF 2.8 and 2.12, `load_model(..., compile=False)`) and bpnet-lite's
+  `BPNet.from_chrombpnet` / `ChromBPNet.from_chrombpnet` read these files; 1.x files re-exported this way have the
+  same datasets, attributes and model config (byte for byte). There is no `training_config` or optimizer state. The count head of a full chrombpnet model is
+  the logsumexp `Lambda` of the 1.x files (Python 3.8 bytecode), so TF-Keras on Python 3.8 - 3.10, and the
+  `load_model_wrapper` of chrombpnet 1.x and the variant-scorer, load it without extra custom objects.
+  `--count-head named` is for TF-Keras on Python >= 3.11, which cannot unmarshal that bytecode: the `Lambda` then
+  names its function and needs `custom_objects={"chrombpnet_logsumexp": ...}` (see
+  `chrombpnet/helpers/postprocessing/README.md`). `model_io.load_model` reads both and maps them to `LogSumExp`.
 
 ### New optional flags (the defaults keep the 1.x behaviour)
 - Training: `--optimizer {adam,muon}`, `--muon-lr`, `--ema`, `--lr-schedule {constant,cosine}`,

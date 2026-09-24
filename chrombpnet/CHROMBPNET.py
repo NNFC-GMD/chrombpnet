@@ -139,8 +139,8 @@ def main():
 	elif args.cmd == "export":
 
 		from chrombpnet.helpers.postprocessing.export_legacy_h5 import export_legacy_h5
-		out = export_legacy_h5(args.model_h5, args.output)
-		print("wrote {} ({})".format(out, args.format))
+		out = export_legacy_h5(args.model_h5, args.output, count_head=args.count_head)
+		print("wrote {} ({}, count head: {})".format(out, args.format, args.count_head))
 
 	elif args.cmd == "prep":
 	

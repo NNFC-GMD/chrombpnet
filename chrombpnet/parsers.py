@@ -302,8 +302,14 @@ def read_parser(argv=None):
         required_export.add_argument("-o", "--output", type=str, required=True, help="Output .h5 file")
         optional_export.add_argument("--legacy-h5", dest="format", action="store_const", const="legacy-h5", default="legacy-h5",
                         help="Write a TF-Keras 2.x full-model .h5 file, in the layout chrombpnet 1.x wrote (the default and, for now, "
-                        "the only format). TF-Keras loads it with load_model(path, compile=False); a full chrombpnet model also needs "
-                        "custom_objects={'chrombpnet_logsumexp': ...} for its count head (see chrombpnet/helpers/postprocessing/README.md)")
+                        "the only format). TF-Keras loads it with load_model(path, compile=False)")
+        optional_export.add_argument("--count-head", choices=["bytecode", "named"], default="bytecode",
+                        help="How the count head (logsumexp Lambda) of a full chrombpnet model is written. 'bytecode' (default): the "
+                        "chrombpnet 1.x Lambda verbatim (Python 3.8 bytecode), which TF-Keras on Python 3.8 - 3.10 (chrombpnet 1.x, "
+                        "variant-scorer) loads without custom objects. 'named': for TF-Keras on Python >= 3.11, which cannot unmarshal "
+                        "that bytecode; the Lambda names its function, so load_model needs "
+                        "custom_objects={'chrombpnet_logsumexp': ...} (see chrombpnet/helpers/postprocessing/README.md). "
+                        "Bias and no-bias models have no Lambda")
 
         # Do variant scoring
         

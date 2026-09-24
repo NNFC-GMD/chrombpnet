@@ -3,8 +3,10 @@
 Checks the file layout against what TF-Keras 2.12 wrote for chrombpnet 1.x (the trace_* reference files in
 CHROMBPNET_GOLDENS, when set), the round trip through model_io.load_model, the dataset reads of bpnet-lite's
 BPNet.from_chrombpnet, and re-exporting the 1.x reference files. CHROMBPNET_TF_PYTHON (a Python interpreter with
-TensorFlow 2.x) additionally loads the exports with TF-Keras itself.
+TensorFlow 2.x; run with TF 2.8 / Python 3.9 and TF 2.12 / Python 3.10) additionally loads the exports with
+TF-Keras itself, the way chrombpnet 1.x and the variant-scorer load models.
 """
+import base64
 import json
 import os
 import re
@@ -23,13 +25,19 @@ import keras
 import chrombpnet.parsers as parsers
 import chrombpnet.training.models.bpnet_model as bpnet_model
 import chrombpnet.training.models.chrombpnet_with_bias_model as chrombpnet_with_bias_model
-from chrombpnet.helpers.postprocessing.export_legacy_h5 import LEGACY_KERAS_VERSION, export_legacy_h5
+from chrombpnet.helpers.postprocessing.export_legacy_h5 import (LEGACY_KERAS_VERSION, LEGACY_LOGSUMEXP_BYTECODE,
+                                                                 LEGACY_LOGSUMEXP_MODULE, export_legacy_h5,
+                                                                 logsumexp_lambda_fields)
 from chrombpnet.training.utils import model_io
 from chrombpnet.training.utils.layers import LOGSUMEXP_LAMBDA_FUNCTION, LogSumExp, LogSumExpCompat
 
-# the geometry of the chrombpnet 1.x reference files (legacy defaults), with few filters
-INPUTLEN, OUTPUTLEN, FILTERS, N_DIL = 2114, 1000, 8, 4
-GOLDEN_FILTERS = (128, 32)   # trace_bias_128x4 / the no-bias model of trace_chrombpnet_32x4
+# the geometry of the chrombpnet 1.x reference files (legacy defaults), with few filters. The bias and no-bias
+# models differ in width, so the weights of one cannot pass for the other's (the full model's outputs are symmetric
+# in them: profile logits add up, counts go through logsumexp)
+INPUTLEN, OUTPUTLEN, N_DIL = 2114, 1000, 4
+FILTERS = {"bias": 16, "nobias": 8}
+# filters of trace_bias_128x4 (and of the bias model of trace_chrombpnet_32x4) / of its no-bias model -> ours
+GOLDEN_FILTERS = {128: FILTERS["bias"], 32: FILTERS["nobias"]}
 BIAS_LAYER_NAMES = ["sequence", "bpnet_1st_conv", "bpnet_1conv", "bpnet_1crop", "add", "bpnet_2conv", "bpnet_2crop",
                     "add_1", "bpnet_3conv", "bpnet_3crop", "add_2", "bpnet_4conv", "bpnet_4crop", "add_3",
                     "prof_out_precrop", "logits_profile_predictions_preflatten", "gap", "logits_profile_predictions",
@@ -45,13 +53,17 @@ CONV_NAMES = ["bpnet_1st_conv"] + ["bpnet_{}conv".format(i) for i in range(1, N_
 BIAS_WEIGHT_LAYERS = CONV_NAMES + ["logcount_predictions"]
 NOBIAS_WEIGHT_LAYERS = ["wo_bias_" + n for n in CONV_NAMES[:-1]] + ["wo_bias_bpnet_prof_out_precrop",
                                                                      "wo_bias_bpnet_logcount_predictions"]
-# model_config fields that legitimately differ from a 1.x file: the count-head Lambda names its function
-LAMBDA_FIELDS = ("function", "function_type", "module")
 TRACES = ["trace_bias_128x4", "trace_chrombpnet_32x4"]
+# the count-head Lambda config of the 1.x chrombpnet.h5 files (the export's default count head)
+LAMBDA_1X = {"name": "logcount_predictions", "trainable": True, "dtype": "float32",
+             "function": [LEGACY_LOGSUMEXP_BYTECODE, None, None], "function_type": "lambda",
+             "module": "chrombpnet.training.models.chrombpnet_with_bias_model", "output_shape": None,
+             "output_shape_type": "raw", "output_shape_module": None, "arguments": {}}
+LAMBDA_NAMED = dict(LAMBDA_1X, function=LOGSUMEXP_LAMBDA_FUNCTION, function_type="function", module=None)
 
 
-def model_params(**kw):
-    params = {"filters": str(FILTERS), "n_dil_layers": str(N_DIL), "counts_loss_weight": "10.0",
+def model_params(kind, **kw):
+    params = {"filters": str(FILTERS[kind]), "n_dil_layers": str(N_DIL), "counts_loss_weight": "10.0",
               "inputlen": str(INPUTLEN), "outputlen": str(OUTPUTLEN)}
     params.update(kw)
     return params
@@ -77,14 +89,14 @@ def predict(model, x):
 def models(tmp_path_factory):
     """Keras 3 bias, chrombpnet and no-bias models built with the architecture files, and their Keras 3 files.
     The no-bias model is built after the bias model in the same process, so Keras 3 numbers its Add layers
-    add_4 ... add_7 (TF-Keras 1.x files have add ... add_3)."""
+    add_4 ... add_7 (TF-Keras 1.x files have add ... add_3). Bias: 16 filters, no-bias: 8 filters."""
     d = tmp_path_factory.mktemp("export_models")
     args = types.SimpleNamespace(seed=11, learning_rate=1e-3)
-    bias = randomize(bpnet_model.getModelGivenModelOptionsAndWeightInits(args, model_params()), 1)
+    bias = randomize(bpnet_model.getModelGivenModelOptionsAndWeightInits(args, model_params("bias")), 1)
     bias_h5 = str(d / "bias.h5")
     bias.save(bias_h5)
     full = chrombpnet_with_bias_model.getModelGivenModelOptionsAndWeightInits(
-        args, model_params(bias_model_path=bias_h5))
+        args, model_params("nobias", bias_model_path=bias_h5))
     randomize(full.get_layer("model_wo_bias"), 2)
     full_h5 = str(d / "chrombpnet.h5")
     full.save(full_h5)
@@ -95,11 +107,13 @@ def models(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def exported(models, tmp_path_factory):
-    """Legacy exports: bias and no-bias from their Keras 3 .h5 files, the full model from the model object."""
+    """Legacy exports: bias and no-bias from their Keras 3 .h5 files, the full model from the model object (with
+    the default 1.x bytecode count head, and with the named-function one)."""
     d = tmp_path_factory.mktemp("exported")
     return {"bias": export_legacy_h5(models["paths"]["bias"], d / "bias.legacy.h5"),
             "nobias": export_legacy_h5(models["paths"]["nobias"], d / "nobias.legacy.h5"),
-            "full": export_legacy_h5(models["full"], d / "chrombpnet.legacy.h5")}
+            "full": export_legacy_h5(models["full"], d / "chrombpnet.legacy.h5"),
+            "full_named": export_legacy_h5(models["full"], d / "chrombpnet.named.legacy.h5", count_head="named")}
 
 
 def trace_file(goldens_dir, trace, which="final.h5"):
@@ -195,6 +209,37 @@ def refs(config):
 
 def lambda_layer(config):
     return [layer for layer in config["config"]["layers"] if layer["class_name"] == "Lambda"]
+
+
+def source_weights(kind, models):
+    """{"<top layer>/<layer>/<weight>:0": value} of the Keras 3 source model, at the path TF-Keras gives each
+    weight: in a full model the bias model's weights under `model`, the no-bias model's under `model_wo_bias`
+    (independent of the exporter's naming code)."""
+    parts = [("model", models["bias"]), ("model_wo_bias", models["nobias"])] if kind == "full" \
+        else [(None, models[kind])]
+    out = {}
+    for top, model in parts:
+        for layer in model.layers:
+            for v in layer.weights:
+                out["{}/{}/{}:0".format(top or layer.name, layer.name, v.name)] = keras.ops.convert_to_numpy(v)
+    return out
+
+
+def assert_variables_match(model, path, reference):
+    """Every variable of a loaded model (of its top-level layers and of the layers of its nested models) equals
+    the dataset model_weights/<top layer>/<layer>/<weight>:0 of `path` and the source weight of that path; every
+    dataset belongs to a variable."""
+    values = dataset_values(path)
+    seen = []
+    for top in model.layers:
+        for sub in (top.layers if isinstance(top, keras.Model) else [top]):
+            for v in sub.weights:
+                key = "{}/{}/{}:0".format(top.name, sub.name, v.name)
+                value = keras.ops.convert_to_numpy(v)
+                np.testing.assert_array_equal(value, values[key], err_msg=key)
+                np.testing.assert_array_equal(value, reference[key], err_msg=key)
+                seen.append(key)
+    assert sorted(seen) == sorted(values) == sorted(reference)
 
 
 # ---- bpnet-lite ----
@@ -326,12 +371,11 @@ def test_model_config_is_keras2(kind, exported):
         # the frozen bias model: layers trainable=False inside a trainable nested model, as chrombpnet 1.x wrote
         assert bias["config"]["trainable"] is True
         assert {layer["config"].get("trainable") for layer in bias["config"]["layers"][1:]} == {False}
+        # the count head: the Lambda of the 1.x files (Python 3.8 bytecode), keys in TF-Keras' order
         [lse] = lambda_layer(config)
         assert lse["name"] == "logcount_predictions"
-        assert lse["config"] == {"name": "logcount_predictions", "trainable": True, "dtype": "float32",
-                                 "function": LOGSUMEXP_LAMBDA_FUNCTION, "function_type": "function", "module": None,
-                                 "output_shape": None, "output_shape_type": "raw", "output_shape_module": None,
-                                 "arguments": {}}
+        assert lse["config"] == LAMBDA_1X and list(lse["config"]) == list(LAMBDA_1X)
+        assert lse["inbound_nodes"] == [[["concatenate", 0, 0, {}]]]
     else:
         assert not lambda_layer(config)
         assert config["config"]["layers"][-1]["class_name"] == "Dense"
@@ -351,6 +395,51 @@ def test_auto_names_become_tf_names(models, exported):
     for nested in config["config"]["layers"][1:3]:
         assert [layer["name"] for layer in nested["config"]["layers"] if layer["class_name"] == "Add"] == \
             ["add", "add_1", "add_2", "add_3"]
+
+
+def test_named_count_head(models, exported):
+    """count_head="named": the same file except for the count-head Lambda, which names its function."""
+    named, default = model_config(exported["full_named"]), model_config(exported["full"])
+    [lse] = lambda_layer(named)
+    assert lse["config"] == LAMBDA_NAMED and list(lse["config"]) == list(LAMBDA_NAMED)
+    assert config_diff(named, default) == [
+        ("/config/layers[5]/config/" + k, LAMBDA_NAMED[k], LAMBDA_1X[k]) for k in ("function", "function_type", "module")]
+    assert weights_tree(exported["full_named"]) == weights_tree(exported["full"])
+    assert root_attrs(exported["full_named"]) == root_attrs(exported["full"])
+    loaded = model_io.load_model(exported["full_named"])
+    assert type(loaded.get_layer("logcount_predictions")) is LogSumExp
+    assert_variables_match(loaded, exported["full_named"], source_weights("full", models))
+    x = one_hot()
+    for got, want in zip(predict(loaded, x), predict(models["full"], x)):
+        np.testing.assert_allclose(got, want, rtol=0, atol=1e-6)
+
+
+def test_bad_count_head_is_refused(models, tmp_path):
+    with pytest.raises(ValueError, match="count_head must be one of bytecode, named"):
+        export_legacy_h5(models["paths"]["full"], tmp_path / "bad.h5", count_head="source")
+    assert not os.listdir(tmp_path)
+
+
+def test_count_head_constant_is_the_1x_bytecode():
+    # base64 of marshalled Python 3.8 code for `lambda x: tf.math.reduce_logsumexp(x, axis=-1, keepdims=True)`,
+    # written from chrombpnet_with_bias_model.py (the reference files below check it byte for byte)
+    code = base64.decodebytes(LEGACY_LOGSUMEXP_BYTECODE.encode("ascii"))
+    assert base64.encodebytes(code).decode("ascii") == LEGACY_LOGSUMEXP_BYTECODE
+    for name in (b"tf", b"math", b"reduce_logsumexp", b"axis", b"keepdims", b"chrombpnet_with_bias_model.py"):
+        assert name in code
+    assert LEGACY_LOGSUMEXP_MODULE == chrombpnet_with_bias_model.__name__
+    assert logsumexp_lambda_fields() == {k: v for k, v in LAMBDA_1X.items() if k not in ("name", "trainable", "dtype")}
+
+
+@pytest.mark.parametrize("which", ["init.h5", "final.h5"])
+def test_count_head_is_the_1x_lambda(which, goldens_dir, exported):
+    """The count-head Lambda of a Keras 3 model's export is the one of the 1.x chrombpnet.h5 files, read from
+    them: config (keys in the same order) and inbound nodes."""
+    golden = trace_file(goldens_dir, "trace_chrombpnet_32x4", which)
+    [want] = lambda_layer(model_config(golden))
+    [got] = lambda_layer(model_config(exported["full"]))
+    assert json.dumps(got) == json.dumps(want)
+    assert want["config"]["function"][0] == LEGACY_LOGSUMEXP_BYTECODE
 
 
 def test_names_kept_without_normalization_or_on_clash(tmp_path):
@@ -388,8 +477,8 @@ def test_unsupported_layers_are_refused(tmp_path):
 @pytest.mark.parametrize("trace,kind", [("trace_bias_128x4", "bias"), ("trace_chrombpnet_32x4", "full")])
 def test_layout_matches_the_1x_reference_files(trace, kind, goldens_dir, exported):
     """A Keras 3 model's export has the layout of the TF-Keras 2.12 file of the same architecture: same
-    attributes (and HDF5 types), layer_names, weight_names, groups, dataset paths and dtypes; shapes and
-    `filters` differ by the number of filters only, and the count-head Lambda names its function."""
+    attributes (and HDF5 types), layer_names, weight_names, groups, dataset paths and dtypes, and the same
+    model_config (count-head Lambda included) except that shapes and `filters` differ by the number of filters."""
     golden, path = trace_file(goldens_dir, trace), exported[kind]
     golden_attrs, golden_keys = root_attrs(golden)
     attrs, keys = root_attrs(path)
@@ -402,28 +491,31 @@ def test_layout_matches_the_1x_reference_files(trace, kind, goldens_dir, exporte
         if want[name][0] == "group":
             assert got[name][1:] == want[name][1:], name
         else:
-            shape = tuple(FILTERS if s in GOLDEN_FILTERS else s for s in want[name][1])
+            shape = tuple(GOLDEN_FILTERS.get(s, s) for s in want[name][1])
             assert got[name] == ("dataset", shape, want[name][2]), name
 
     diffs = config_diff(model_config(path), model_config(golden))
-    unexpected = [d for d in diffs if not d[0].endswith("/filters") and d[0].rsplit("/", 1)[-1] not in LAMBDA_FIELDS]
-    assert not unexpected
-    lambda_diffs = {d[0].rsplit("/", 1)[-1] for d in diffs if not d[0].endswith("/filters")}
-    assert lambda_diffs == (set(LAMBDA_FIELDS) if kind == "full" else set())
+    assert diffs and all(d[0].endswith("/filters") and GOLDEN_FILTERS[d[2]] == d[1] for d in diffs), diffs
 
 
 # ---- (2) round trip ----
 
 @pytest.mark.parametrize("kind", ["bias", "nobias", "full"])
-def test_round_trip_predictions(kind, models, exported):
+def test_round_trip(kind, models, exported):
     x = one_hot()
     loaded = model_io.load_model(exported[kind])
+    # each variable by path, against the file and the source model (predictions alone cannot tell a full model
+    # from one with the bias and no-bias weights swapped)
+    assert_variables_match(loaded, exported[kind], source_weights(kind, models))
     for got, want in zip(predict(loaded, x), predict(models[kind], x)):
         np.testing.assert_allclose(got, want, rtol=0, atol=1e-6)
     assert loaded.output_names == models[kind].output_names
     if kind == "full":
         assert type(loaded.get_layer("logcount_predictions")) is LogSumExp
         assert [layer.name for layer in loaded.layers] == FULL_LAYER_NAMES
+        for nested, source in (("model_wo_bias", "nobias"), ("model", "bias")):
+            for got, want in zip(predict(loaded.get_layer(nested), x), predict(models[source], x)):
+                np.testing.assert_allclose(got, want, rtol=0, atol=1e-6, err_msg=nested)
         assert not loaded.get_layer("model").trainable_weights   # still frozen
         assert len(loaded.trainable_weights) == len(models["full"].trainable_weights)
 
@@ -445,13 +537,12 @@ def test_keras_file_exports_like_the_model(models, exported, tmp_path):
         np.testing.assert_array_equal(got[name], want[name])
 
 
-def test_logsumexp_compat_accepts_the_named_function():
+def test_logsumexp_compat_accepts_both_count_heads():
     base = {"name": "logcount_predictions", "trainable": True, "dtype": "float32", "output_shape": None,
             "arguments": {}}
-    # as Keras 3's legacy loader passes it (function_type / module dropped) and as written in the file
-    for config in (dict(base, function=LOGSUMEXP_LAMBDA_FUNCTION),
-                   dict(base, function=LOGSUMEXP_LAMBDA_FUNCTION, function_type="function", module=None,
-                        output_shape_type="raw", output_shape_module=None)):
+    # as Keras 3's legacy loader passes them (function_type / module dropped) and as written in the file
+    for config in (dict(base, function=LOGSUMEXP_LAMBDA_FUNCTION), LAMBDA_NAMED,
+                   dict(base, function=[LEGACY_LOGSUMEXP_BYTECODE, None, None]), LAMBDA_1X):
         assert type(LogSumExpCompat.from_config(config)) is LogSumExp
     for config in (dict(base, function="some_other_function", function_type="function"),
                    dict(base, function=LOGSUMEXP_LAMBDA_FUNCTION, name="other_head")):
@@ -464,7 +555,7 @@ def test_logsumexp_compat_accepts_the_named_function():
 @pytest.mark.parametrize("kind", ["bias", "nobias"])
 def test_bpnetlite_finds_every_weight(kind, models, exported):
     n_layers, n_filters, reads = bpnetlite_from_chrombpnet_reads(exported[kind])
-    assert (n_layers, n_filters) == (N_DIL, FILTERS)
+    assert (n_layers, n_filters) == (N_DIL, FILTERS[kind])
     values = dataset_values(exported[kind])
     assert set(reads) == set(values)   # every weight in the file, and nothing missing
     for name, value in reads.items():
@@ -494,8 +585,8 @@ def test_bpnetlite_reader_on_the_1x_bias_file(goldens_dir):
 @pytest.mark.parametrize("trace", TRACES)
 def test_reexported_1x_files_are_identical(trace, which, goldens_dir, tmp_path):
     """Loading a TF-Keras 2.12 file and exporting it gives the same file, except that there is no
-    training_config / optimizer_weights and the count-head Lambda names its function instead of storing
-    Python bytecode."""
+    training_config / optimizer_weights: the same model_config text (count-head Lambda included), attributes,
+    datasets."""
     golden = trace_file(goldens_dir, trace, which)
     model = model_io.load_model(golden)
     path = export_legacy_h5(model, tmp_path / "reexported.h5")
@@ -512,8 +603,9 @@ def test_reexported_1x_files_are_identical(trace, which, goldens_dir, tmp_path):
     for name in want:
         np.testing.assert_array_equal(got[name], want[name], err_msg=name)
 
-    diffs = config_diff(model_config(path), model_config(golden))
-    assert {d[0].rsplit("/", 1)[-1] for d in diffs} == (set(LAMBDA_FIELDS) if "chrombpnet" in trace else set())
+    assert config_diff(model_config(path), model_config(golden)) == []
+    with h5py.File(golden, "r") as g, h5py.File(path, "r") as f:
+        assert f.attrs["model_config"] == g.attrs["model_config"]   # the JSON text, byte for byte
     x = one_hot()
     for a, b in zip(predict(model_io.load_model(path), x), predict(model, x)):
         np.testing.assert_allclose(a, b, rtol=0, atol=1e-6)
@@ -523,44 +615,112 @@ def test_reexported_1x_files_are_identical(trace, which, goldens_dir, tmp_path):
 
 def test_cli_parses():
     args = parsers.read_parser(["export", "-m", "m.h5", "-o", "out.h5"])
-    assert (args.cmd, args.model_h5, args.output, args.format) == ("export", "m.h5", "out.h5", "legacy-h5")
+    assert (args.cmd, args.model_h5, args.output, args.format, args.count_head) == \
+        ("export", "m.h5", "out.h5", "legacy-h5", "bytecode")
     assert parsers.read_parser(["export", "-m", "m.keras", "-o", "o.h5", "--legacy-h5"]).format == "legacy-h5"
+    assert parsers.read_parser(["export", "-m", "m.h5", "-o", "o.h5", "--count-head", "named"]).count_head == "named"
+    with pytest.raises(SystemExit):
+        parsers.read_parser(["export", "-m", "m.h5", "-o", "o.h5", "--count-head", "source"])
 
 
 def test_cli_help(capsys):
     with pytest.raises(SystemExit) as exc:
         parsers.read_parser(["export", "--help"])
     assert exc.value.code == 0
-    assert "--legacy-h5" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "--legacy-h5" in out and "--count-head {bytecode,named}" in out
 
 
-def test_cli_export(models, tmp_path, monkeypatch):
+@pytest.mark.parametrize("flags,lambda_config", [([], LAMBDA_1X), (["--count-head", "named"], LAMBDA_NAMED)])
+def test_cli_export(flags, lambda_config, models, tmp_path, monkeypatch):
     import chrombpnet.CHROMBPNET as cli
     out = tmp_path / "bias.legacy.h5"
-    monkeypatch.setattr(sys, "argv", ["chrombpnet", "export", "-m", models["paths"]["bias"], "-o", str(out)])
+    monkeypatch.setattr(sys, "argv", ["chrombpnet", "export", "-m", models["paths"]["bias"], "-o", str(out)] + flags)
     cli.main()
     assert weights_tree(out)[""][1]["layer_names"] == BIAS_LAYER_NAMES
+    out = tmp_path / "chrombpnet.legacy.h5"
+    monkeypatch.setattr(sys, "argv", ["chrombpnet", "export", "-m", models["paths"]["full"], "-o", str(out)] + flags)
+    cli.main()
+    assert lambda_layer(model_config(out))[0]["config"] == lambda_config
 
 
 # ---- TF-Keras itself (optional) ----
 
+# argv: x.npy, then (mode, export, reference) triples. Modes: "plain" loads with no custom objects at all, "legacy"
+# the way chrombpnet 1.x and the variant-scorer load models (their load_model_wrapper), "named" with the function of
+# the named-function count head. The reference file holds the Keras 3 outputs (of the model and of its nested
+# models) and every source weight at its TF-Keras path, <top layer>/<layer>/<weight>:0.
 TF_CHECK = textwrap.dedent("""
     import sys
+    import h5py
     import numpy as np
     import tensorflow as tf
 
     def chrombpnet_logsumexp(x):
         return tf.math.reduce_logsumexp(x, axis=-1, keepdims=True)
 
-    x = np.load(sys.argv[1])
-    for path, ref in zip(sys.argv[2::2], sys.argv[3::2]):
-        model = tf.keras.models.load_model(
+    def multinomial_nll(true_counts, logits):
+        raise NotImplementedError
+
+    def load(mode, path):
+        if mode == "plain":
+            return tf.keras.models.load_model(path, compile=False)
+        if mode == "legacy":   # chrombpnet 1.x / variant-scorer load_model_wrapper
+            tf.keras.utils.get_custom_objects().update({"multinomial_nll": multinomial_nll, "tf": tf})
+            return tf.keras.models.load_model(path, compile=False)
+        assert mode == "named", mode
+        return tf.keras.models.load_model(
             path, compile=False, custom_objects={"chrombpnet_logsumexp": chrombpnet_logsumexp})
-        ref = np.load(ref)
-        for got, want in zip(model.predict(x, verbose=0), (ref["profile"], ref["counts"])):
-            np.testing.assert_allclose(got, want, rtol=0, atol=1e-4)
-        print("ok", path)
+
+    def check_outputs(model, x, ref, what):
+        got = model.predict(x, verbose=0)
+        for out, name in zip(got, ("profile", "counts")):
+            np.testing.assert_allclose(out, ref[name][()], rtol=0, atol=1e-4, err_msg=what + " " + name)
+
+    def n_datasets(group):
+        found = []
+        group.visititems(lambda name, obj: found.append(name) if isinstance(obj, h5py.Dataset) else None)
+        return len(found)
+
+    x = np.load(sys.argv[1])
+    runs = [sys.argv[i:i + 3] for i in range(2, len(sys.argv), 3)]
+    for mode in ("plain", "legacy", "named"):   # "legacy" registers custom objects globally: plain loads first
+        for _, path, ref_path in [run for run in runs if run[0] == mode]:
+            model = load(mode, path)
+            with h5py.File(path, "r") as f, h5py.File(ref_path, "r") as ref:
+                # each variable, by its path in the file, equals that dataset and the source weight of that path
+                n = 0
+                for top in model.layers:
+                    for sub in (top.layers if isinstance(top, tf.keras.Model) else [top]):
+                        for v in sub.weights:
+                            key = "{}/{}/{}".format(top.name, sub.name, v.name.split("/")[-1])
+                            np.testing.assert_array_equal(v.numpy(), f["model_weights"][key][()], err_msg=key)
+                            np.testing.assert_array_equal(v.numpy(), ref["weights"][key][()], err_msg=key)
+                            n += 1
+                assert n == n_datasets(f["model_weights"]) == n_datasets(ref["weights"]), path
+                for name in ref.attrs["frozen"]:
+                    assert not model.get_layer(name).trainable_weights, (path, name)
+                assert len(model.trainable_weights) == ref.attrs["n_trainable"], path
+                check_outputs(model, x, ref["outputs"], path)
+                for name in ref["nested_outputs"]:
+                    check_outputs(model.get_layer(name), x, ref["nested_outputs"][name], path + " " + name)
+            print("ok", mode, path)
 """)
+
+
+def write_tf_reference(path, kind, models, x):
+    """The reference file TF_CHECK compares a TF-Keras-loaded export of `kind` with."""
+    source = models["full" if kind == "full_named" else kind]
+    nested = {"model_wo_bias": models["nobias"], "model": models["bias"]} if source is models["full"] else {}
+    with h5py.File(path, "w") as f:
+        for group, model in [("outputs", source)] + [("nested_outputs/" + n, m) for n, m in nested.items()]:
+            profile, counts = predict(model, x)
+            f[group + "/profile"], f[group + "/counts"] = profile, counts
+        f.require_group("nested_outputs")
+        for key, value in source_weights("full" if nested else kind, models).items():
+            f["weights/" + key] = value
+        f.attrs["frozen"] = ["model"] if nested else []
+        f.attrs["n_trainable"] = len(source.trainable_weights)
 
 
 def test_tf_keras_loads_the_exports(models, exported, tmp_path):
@@ -570,10 +730,13 @@ def test_tf_keras_loads_the_exports(models, exported, tmp_path):
     x = one_hot()
     np.save(tmp_path / "x.npy", x)
     argv = [python, "-c", TF_CHECK, str(tmp_path / "x.npy")]
-    for kind in ("bias", "nobias", "full"):
-        profile, counts = predict(models[kind], x)
-        np.savez(tmp_path / (kind + ".npz"), profile=profile, counts=counts)
-        argv += [exported[kind], str(tmp_path / (kind + ".npz"))]
+    # the default exports load with no custom objects, and the full model as the legacy readers load it
+    runs = [("plain", "bias"), ("plain", "nobias"), ("plain", "full"), ("legacy", "full"), ("named", "full_named")]
+    for mode, kind in runs:
+        reference = str(tmp_path / (kind + ".ref.h5"))
+        if not os.path.exists(reference):
+            write_tf_reference(reference, kind, models, x)
+        argv += [mode, exported[kind], reference]
     result = subprocess.run(argv, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr[-3000:]
-    assert result.stdout.count("ok ") == 3
+    assert result.stdout.count("ok ") == len(runs), result.stdout
