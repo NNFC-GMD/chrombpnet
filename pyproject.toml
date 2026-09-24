@@ -97,14 +97,13 @@ meme = ">=5.5.7"              # tomtom for `modisco report-simple` (use --tomtom
 meme = ">=5.5.7"
 
 [tool.pixi.target.osx-arm64.dependencies]
-coreutils = "*"               # GNU shuf/sort used by the preprocessing helpers
+coreutils = "*"               # GNU sort used by the preprocessing helpers
 
 [tool.pixi.pypi-dependencies]
 chrombpnet = { path = ".", editable = true }
 
 [tool.pixi.activation.env]
 KERAS_BACKEND = "jax"
-XLA_PYTHON_CLIENT_PREALLOCATE = "false"
 
 [tool.pixi.tasks]
 versions = '''python -c "import jax, keras, chrombpnet; print('keras', keras.__version__, keras.backend.backend(), '| jax', jax.__version__, jax.devices())"'''
@@ -117,14 +116,14 @@ test = "pytest -q -m 'not gpu and not slow'"
 platforms = ["linux-64-cuda13", "linux-aarch64-cuda13"]
 
 [tool.pixi.feature.cuda13.tasks]
-gpu-check = '''python -c "import jax; d = jax.devices('gpu'); print(d); import jax.numpy as jnp; print(float(jnp.ones((256, 256)).sum()))"'''
+gpu-check = '''python -c "import chrombpnet, jax; d = jax.devices('gpu'); print(d); import jax.numpy as jnp; print(float(jnp.ones((256, 256)).sum()))"'''
 test-gpu = "pytest -q -m gpu"
 
 [tool.pixi.feature.cuda12]
 platforms = ["linux-64-cuda12"]
 
 [tool.pixi.feature.cuda12.tasks]
-gpu-check = '''python -c "import jax; print(jax.devices('gpu'))"'''
+gpu-check = '''python -c "import chrombpnet, jax; print(jax.devices('gpu'))"'''
 
 [tool.pixi.feature.cpu]
 platforms = ["linux-64", "linux-aarch64", "osx-arm64"]

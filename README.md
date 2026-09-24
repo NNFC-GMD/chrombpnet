@@ -110,11 +110,9 @@ variable, including ones you may want. Pass those explicitly, for example
   `cuda12` environment.
 - **No `module load cuda`, no `LD_LIBRARY_PATH`.** JAX brings its own CUDA, cuDNN and NCCL as pip wheels.
   System CUDA libraries found first through `LD_LIBRARY_PATH` shadow them and break start-up.
-- **Memory.** `XLA_PYTHON_CLIENT_PREALLOCATE=false` is set by the pixi environments (so it also covers
-  `gpu-check`), by the Docker image, and by importing chrombpnet when it is unset. JAX then allocates GPU memory
-  as it needs it, instead of reserving 75% of the card at start-up. Under `pixi run` the environment's value
-  wins over your `export`. To preallocate anyway, run
-  `pixi run env XLA_PYTHON_CLIENT_PREALLOCATE=true chrombpnet ...`.
+- **Memory.** Importing chrombpnet sets `XLA_PYTHON_CLIENT_PREALLOCATE=false` when it is unset (the Docker image
+  sets it too, and `gpu-check` imports chrombpnet first). JAX then allocates GPU memory as it needs it, instead of
+  reserving 75% of the card at start-up. An `export XLA_PYTHON_CLIENT_PREALLOCATE=true` of your own wins.
 - **Shared GPUs.** JAX does not return memory it has allocated until the process ends. DeepSHAP picks its batch
   size from the model size and the free GPU memory, so `chrombpnet pipeline` keeps that memory through the
   TF-MoDISco step that follows. On a GPU shared with other jobs, cap the process, e.g.
@@ -291,7 +289,7 @@ commands take which flag.
 | `--precision {default,highest,bf16}` | float32 matmul/convolution precision for training: `default` lets the GPU use TF32 as TensorFlow did, `highest` forces full float32, `bf16` trains in mixed bfloat16 |
 | `--device {auto,gpu,cpu}` | `gpu` fails immediately if JAX sees no GPU, instead of silently training on the CPU |
 | `--interpret-subsample N` | number of peaks used for DeepSHAP and TF-MoDISco in the pipelines (default 30000) |
-| `--shap-seed`, `--shap-batch-seqs`, `--shap-precision` | DeepSHAP reference seed (default 1234), sequences per batch (default: automatic), precision (default `highest`) |
+| `--shap-seed`, `--shap-batch-seqs`, `--shap-precision` | DeepSHAP reference seed (default 1234), sequences per batch (default: automatic), precision (default `auto`: full float32 on CPU, TF32 on GPU as in 1.x) |
 | `--modisco-max-seqlets`, `--modisco-window` | TF-MoDISco limits (defaults 50000 and 500) |
 | `--tomtom-lite` | match motifs with TOMTOM-lite instead of MEME `tomtom`: much faster, needs no MEME, reports p-values |
 

@@ -41,8 +41,8 @@ instead of training on the CPU. `pixi run --frozen` uses `pixi.lock` exactly as 
 
 ## Memory and threads
 
-* JAX allocates GPU memory on demand (`XLA_PYTHON_CLIENT_PREALLOCATE=false`, set by the pixi environment, so
-  `gpu-check` does too), unlike its default of reserving 75% of the card. It does not return that memory until
+* JAX allocates GPU memory on demand (`XLA_PYTHON_CLIENT_PREALLOCATE=false`, set by importing chrombpnet when
+  unset; `gpu-check` imports chrombpnet first), unlike its default of reserving 75% of the card. It does not return that memory until
   the process ends, and DeepSHAP picks its batch size from the free GPU memory. On a GPU shared with other jobs,
   also set `XLA_PYTHON_CLIENT_MEM_FRACTION` (a fraction of the card's total memory).
 * `OMP_NUM_THREADS` and `NUMBA_NUM_THREADS` follow `--cpus-per-task`. TF-MoDISco (numba) is the CPU-heavy step

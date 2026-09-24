@@ -156,7 +156,7 @@ def main(args):
                                use_tqdm=args.tqdm)
 
         if args.bigwig:
-        	compare_with_observed(args.bigwig, regions_df, regions, outputlen, 
+        	compare_with_observed(args.bigwig, regions_df[regions_used], regions, outputlen, 
         				pred_logits_wo_bias, pred_logcts_wo_bias, args.output_prefix+"_chrombpnet_nobias")
         	
 
@@ -187,7 +187,7 @@ def main(args):
                                use_tqdm=args.tqdm)
 
         if args.bigwig:
-        	compare_with_observed(args.bigwig, regions_df, regions, outputlen, 
+        	compare_with_observed(args.bigwig, regions_df[regions_used], regions, outputlen, 
         				pred_logits, pred_logcts, args.output_prefix+"_chrombpnet")
         	
 
@@ -216,7 +216,7 @@ def main(args):
                                use_tqdm=args.tqdm)
 
         if args.bigwig:
-        	compare_with_observed(args.bigwig, regions_df, regions, outputlen, 
+        	compare_with_observed(args.bigwig, regions_df[regions_used], regions, outputlen, 
         				pred_bias_logits, pred_bias_logcts, args.output_prefix+"_bias")
         
     

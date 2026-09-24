@@ -93,7 +93,7 @@ def read_parser(argv=None):
         def interpret_args(optional):
         	optional.add_argument("--shap-seed", type=int, default=1234, help="Seed for the dinucleotide-shuffled DeepSHAP references")
         	optional.add_argument("--shap-batch-seqs", type=int, default=None, help="Sequences per DeepSHAP batch (each with its 20 references). default: chosen automatically from the model size and available GPU memory; halved on out-of-memory")
-        	optional.add_argument("--shap-precision", type=str, default="highest", choices=["highest", "default"], help="Matmul/convolution precision for DeepSHAP: highest (full float32) or default (TF32 on GPUs that have it)")
+        	optional.add_argument("--shap-precision", type=str, default="auto", choices=["auto", "highest", "default"], help="Matmul/convolution precision for DeepSHAP: auto (default; full float32 on CPU, TF32 on GPU as in chrombpnet 1.x), highest (full float32 everywhere; very slow on some GPUs) or default (TF32 on GPUs that have it)")
         	return optional
 
         def interpret_modisco_args(optional):

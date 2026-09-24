@@ -9,7 +9,7 @@ import numpy as np
 def interpret_args(args_copy, args):
 	# interpret reads args.seed/precision/batch_seqs; the pipeline's --seed and --precision are the training ones
 	args_copy.seed = getattr(args, "shap_seed", 1234)
-	args_copy.precision = getattr(args, "shap_precision", "highest")
+	args_copy.precision = getattr(args, "shap_precision", "auto")
 	args_copy.batch_seqs = getattr(args, "shap_batch_seqs", None)
 	return args_copy
 

@@ -58,7 +58,7 @@ LEGACY_DEFAULTS = {
 # 30K interpret subsample with seed 1234, modisco -n 50000 -w 500 with MEME tomtom)
 TRAINING_FLAGS = dict(optimizer="adam", muon_lr=None, ema=False, ema_momentum=0.999, lr_schedule="constant",
                       precision="default")
-INTERPRET_FLAGS = dict(shap_seed=1234, shap_batch_seqs=None, shap_precision="highest")
+INTERPRET_FLAGS = dict(shap_seed=1234, shap_batch_seqs=None, shap_precision="auto")
 MODISCO_FLAGS = dict(interpret_subsample=30000, modisco_max_seqlets=50000, modisco_window=500, tomtom_lite=False)
 NEW_DEFAULTS = {
     "pipeline": dict(TRAINING_FLAGS, device="auto", **INTERPRET_FLAGS, **MODISCO_FLAGS),
@@ -150,11 +150,11 @@ def test_interpret_args_do_not_inherit_training_seed_or_precision():
     args = parsers.read_parser(MINIMAL_ARGV["pipeline"] + ["-s", "99", "--precision", "bf16", "--shap-seed", "5",
                                                            "--shap-batch-seqs", "8"])
     out = pipelines.interpret_args(argparse.Namespace(), args)
-    assert (out.seed, out.precision, out.batch_seqs) == (5, "highest", 8)
+    assert (out.seed, out.precision, out.batch_seqs) == (5, "auto", 8)
     assert (args.seed, args.precision) == (99, "bf16")
     # namespaces built by downstream code (igvf_tf_chrombpnet) have none of the new attributes
     out = pipelines.interpret_args(argparse.Namespace(seed=7), argparse.Namespace())
-    assert (out.seed, out.precision, out.batch_seqs) == (1234, "highest", None)
+    assert (out.seed, out.precision, out.batch_seqs) == (1234, "auto", None)
 
 
 # ---------------------------------------------------------------- pipeline wiring with fake steps
@@ -243,7 +243,7 @@ def test_bias_qc_wiring_defaults(tmp_path, fake_steps):
         ("predict", "bias.h5", os.path.join(o, "auxiliary/fp_filtered.bias_peaks.bed"),
          os.path.join(o, "auxiliary/fp_filtered.bias_nonpeaks.bed"), os.path.join(o, "evaluation/fp_bias"), 2114, 1000),
         ("interpret", "bias.h5", os.path.join(o, "auxiliary/fp_30K_subsample_peaks.bed"), sub + "fp_bias",
-         ("counts", "profile"), 1234, "highest", None),
+         ("counts", "profile"), 1234, "auto", None),
         # legacy order: profile motifs + report, then counts; `modisco motifs -n 50000 -w 500`, MEME tomtom
         ("motifs", sub + "fp_bias.profile_scores.h5", sub + "fp_modisco_results_profile_scores.h5", 50000, 500, None),
         ("report", sub + "fp_modisco_results_profile_scores.h5", os.path.join(o, "evaluation/modisco_profile/"), meme,
@@ -290,7 +290,7 @@ def test_chrombpnet_qc_wiring(tmp_path, fake_steps):
     assert fake_steps[2] == ("footprints", "nb.h5", "n.bed", os.path.join(o, "evaluation/fp_chrombpnet_nobias"))
     assert os.path.exists(os.path.join(o, "auxiliary/fp_chrombpnet_nobias_footprints.h5"))
     assert fake_steps[3] == ("interpret", "nb.h5", os.path.join(o, "auxiliary/fp_30K_subsample_peaks.bed"),
-                             sub + "fp_chrombpnet_nobias", ("profile",), 1234, "highest", None)
+                             sub + "fp_chrombpnet_nobias", ("profile",), 1234, "auto", None)
     assert fake_steps[4] == ("motifs", sub + "fp_chrombpnet_nobias.profile_scores.h5",
                              sub + "fp_modisco_results_profile_scores.h5", 50000, 500, None)
     assert fake_steps[5][1:3] == (sub + "fp_modisco_results_profile_scores.h5",

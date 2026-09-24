@@ -20,11 +20,8 @@ COPY pyproject.toml pixi.lock conda-pypi-map.json ./
 RUN CONDA_OVERRIDE_CUDA=${CUDA_VERSION} pixi install --locked -e ${PIXI_ENV} --skip chrombpnet
 COPY README.md LICENSE MANIFEST.in ./
 COPY chrombpnet ./chrombpnet
-# The runtime ENV below sets XLA_PYTHON_CLIENT_PREALLOCATE=false; drop pixi's copy from the hook so that
-# `docker run -e XLA_PYTHON_CLIENT_PREALLOCATE=true` still works through the entrypoint.
 RUN CONDA_OVERRIDE_CUDA=${CUDA_VERSION} pixi install --locked -e ${PIXI_ENV} \
  && pixi shell-hook -e ${PIXI_ENV} --shell=bash --as-is > /opt/chrombpnet/shell-hook.sh \
- && sed -i '/^export XLA_PYTHON_CLIENT_PREALLOCATE=/d' /opt/chrombpnet/shell-hook.sh \
  && printf '#!/bin/bash\n. /opt/chrombpnet/shell-hook.sh\nexec "$@"\n' > /opt/chrombpnet/entrypoint.sh \
  && chmod 0755 /opt/chrombpnet/entrypoint.sh \
  && CONDA_OVERRIDE_CUDA=${CUDA_VERSION} JAX_PLATFORMS=cpu pixi run -e ${PIXI_ENV} --as-is python -c \

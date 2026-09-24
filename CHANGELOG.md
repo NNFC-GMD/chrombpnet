@@ -27,8 +27,11 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
 ### Interpretation
 - A native JAX DeepSHAP replaces kundajelab-shap (TF1 graph mode). The semantics are the same: the DeepLIFT
   rescale rule for ReLUs, 20 dinucleotide-shuffled references per sequence, the same profile-head weighting, and
-  hypothetical scores projected onto the input. It is faster, batched on the GPU, and uses `highest` precision by
-  default.
+  hypothetical scores projected onto the input. It is batched on the GPU and 4x (chrombpnet_nobias profile) to
+  6-9x (bias model, both heads) faster than 1.x on an RTX PRO 6000. Precision `auto` (default): full float32 on
+  CPU, TF32 on GPU as in 1.x (full-float32 convolutions are ~300x slower on some GPUs, e.g. Blackwell RTX PRO
+  6000; request them with `--shap-precision highest`). Against 1.x with identical references the scores agree to
+  rel. L2 <= 4e-4 (TF32, GPU) / 1e-7 (float32, CPU).
 - DeepSHAP references are now seeded (`--shap-seed`, default 1234) from the seed and each sequence's content.
   Scores are reproducible and do not depend on the order or batching of regions. The 1.x references were
   unseeded, so old and new scores agree statistically, not exactly.
@@ -78,7 +81,7 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
 - Training: `--optimizer {adam,muon}`, `--muon-lr`, `--ema`, `--lr-schedule {constant,cosine}`,
   `--precision {default,highest,bf16}`, `--device {auto,gpu,cpu}`.
 - Interpretation: `--interpret-subsample` (default 30000), `--shap-seed` (default 1234), `--shap-batch-seqs`,
-  `--shap-precision {highest,default}`.
+  `--shap-precision {auto,highest,default}`.
 - MoDISco: `--modisco-max-seqlets` (default 50000), `--modisco-window` (default 500), `--tomtom-lite`.
 - Preprocessing helpers: `-s/--seed` (default 1234) on `python -m chrombpnet.helpers.preprocessing.reads_to_bigwig`
   and `... auto_shift_detect`, for the reads sampled for shift estimation.

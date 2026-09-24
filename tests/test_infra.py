@@ -39,12 +39,15 @@ def _runtime_env(dockerfile_text):
     return env
 
 
-def test_pixi_activation_disables_preallocation():
-    # Every `pixi run` process, including `gpu-check`, which imports jax without chrombpnet.
+def test_pixi_activation_leaves_preallocation_to_the_caller():
+    # pixi activation variables override what the caller exported, so the on-demand allocation default lives in
+    # chrombpnet/__init__.py (setdefault) and every task that touches the GPU imports chrombpnet first.
     config = tomllib.loads(_require(REPO / "pyproject.toml").read_text())
-    env = config["tool"]["pixi"]["activation"]["env"]
-    assert env["XLA_PYTHON_CLIENT_PREALLOCATE"] == "false"
-    assert env["KERAS_BACKEND"] == "jax"
+    pixi = config["tool"]["pixi"]
+    assert "XLA_PYTHON_CLIENT_PREALLOCATE" not in pixi["activation"]["env"]
+    assert pixi["activation"]["env"]["KERAS_BACKEND"] == "jax"
+    for feature in ("cuda13", "cuda12"):
+        assert "import chrombpnet" in pixi["feature"][feature]["tasks"]["gpu-check"]
 
 
 def test_workflow_action_refs_are_pinned():
@@ -73,12 +76,6 @@ def test_runtime_image_isolates_python_from_host():
     assert env.get("PYTHONHOME") == ""
     assert env.get("KERAS_BACKEND") == "jax"
     assert env.get("XLA_PYTHON_CLIENT_PREALLOCATE") == "false"
-
-
-def test_entrypoint_hook_leaves_preallocation_to_the_caller():
-    # The pixi shell hook would re-export XLA_PYTHON_CLIENT_PREALLOCATE=false over `docker run -e ...=true`.
-    text = _require(DOCKERFILE).read_text()
-    assert "sed -i '/^export XLA_PYTHON_CLIENT_PREALLOCATE=/d' /opt/chrombpnet/shell-hook.sh" in text
 
 
 def test_runtime_env_parser():
