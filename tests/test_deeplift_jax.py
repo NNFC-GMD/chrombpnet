@@ -391,10 +391,10 @@ def test_unsupported_layers_raise():
 def test_auto_batch_seqs(model):
     # small models are capped at 32 sequences per step
     assert auto_batch_seqs(model) == 32
-    # chrombpnet_nobias-sized (512 filters, 8 dilated layers, 2114 bp): ~1.8 GB per sequence -> 4 in 8 GB
+    # chrombpnet_nobias-sized (512 filters, 8 dilated layers, 2114 bp): ~4 GB per sequence (estimate) in 12 GB
     wide = build_bpnet(filters=512, n_dil=8, inputlen=2114)
-    assert auto_batch_seqs(wide) == 4
-    assert auto_batch_seqs(wide, n_heads=2) == 3
+    assert auto_batch_seqs(wide) == 2
+    assert auto_batch_seqs(wide, n_heads=2) == 1
 
     class SmallDevice:
         def memory_stats(self):

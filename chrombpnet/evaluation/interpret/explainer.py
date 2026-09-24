@@ -130,8 +130,9 @@ def auto_batch_seqs(model, n_heads=1, num_shuffles=NUM_SHUFFLES, device=None):
     """Sequences per step, sized from the model's activations and the free device memory.
 
     Each sequence contributes 2 * num_shuffles rows (itself repeated and its references). Measured on an
-    RTX PRO 6000: chrombpnet_nobias (512x8) needs ~1.7 GB per sequence for one head, and throughput is flat
-    from 2 sequences per step on, so steps are kept to ~8 GB (4 sequences for 512x8, ~28 for a 128x4 bias).
+    RTX PRO 6000 (TF32): chrombpnet_nobias (512x8) runs at ~36 sequences/s from 2 sequences per step on, and a
+    128x4 bias model at 100-150 sequences/s with 14 per step, so steps are kept to ~12 GB (2 sequences for
+    512x8, 12-18 for 128x4) with a conservative per-row estimate.
     """
     per_row = None
     try:
@@ -141,8 +142,8 @@ def auto_batch_seqs(model, n_heads=1, num_shuffles=NUM_SHUFFLES, device=None):
     if not per_row:
         filters = [layer.filters for layer in iter_layers(model) if isinstance(layer, keras.layers.Conv1D)]
         return 4 if filters and max(filters) >= 256 else 16
-    bytes_per_seq = 2 * num_shuffles * per_row * 4 * (1.3 + 0.5 * (n_heads - 1))
-    budget = 8e9
+    bytes_per_seq = 2 * num_shuffles * per_row * 4 * (3.0 + 1.5 * (n_heads - 1))
+    budget = 12e9
     device = device or jax.devices()[0]
     try:
         stats = device.memory_stats() or {}
