@@ -26,6 +26,7 @@ def parse_args():
     parser.add_argument('--ATAC-ref-path', type=str, default=None, help="Path to ATAC reference motifs (chrombpnet/data/ATAC.ref.motifs.txt used by default)")
     parser.add_argument('--DNASE-ref-path', type=str, default=None, help="Path to DNASE reference motifs (chrombpnet/data/DNASE.ref.motifs.txt used by default)")
     parser.add_argument('--num-samples', type=int, default=10000, help="Number of reads to sample from BAM/fragment/tagAlign file for shift estimation")
+    parser.add_argument('-s', '--seed', type=int, default=1234, help="Seed for sampling the reads used in shift estimation")
     args = parser.parse_args()
 
     return args
@@ -61,19 +62,24 @@ def generate_bigwig(input_bam_file, input_fragment_file, input_tagalign_file, ou
         print("Making BedGraph (Do not filter chromosomes not in reference fasta)")
 
         with open(tmp_bedgraph.name, 'w') as f:
-            p2 = subprocess.Popen([cmd], stdin=p1.stdout, stdout=f, shell=True)
+            p2 = subprocess.Popen(cmd, stdin=p1.stdout, stdout=f, shell=True)
             p1.stdout.close()
             p2.communicate()
     else:
         print("Making BedGraph (Filter chromosomes not in reference fasta)")
 
         with open(tmp_bedgraph.name, 'w') as f:
-            p2 = subprocess.Popen([cmd], stdin=subprocess.PIPE, stdout=f, shell=True)
+            p2 = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=f, shell=True)
             auto_shift_detect.stream_filtered_tagaligns(p1, genome_fasta_file, p2)
             p2.communicate()
+    auto_shift_detect.check_returncode(p2)
+    auto_shift_detect.check_returncode(p1)
+    # only the last command's exit status is checked; a failure earlier in the pipeline leaves no coverage
+    if os.path.getsize(tmp_bedgraph.name) == 0:
+        raise RuntimeError("Empty bedGraph from `{}`: no reads left after filtering, or a command in the pipeline failed (see its error above)".format(cmd.strip()))
 
     print("Making Bigwig")
-    subprocess.run(["bedGraphToBigWig", tmp_bedgraph.name, chrom_sizes_file, output_prefix + "_unstranded.bw"])
+    subprocess.run(["bedGraphToBigWig", tmp_bedgraph.name, chrom_sizes_file, output_prefix + "_unstranded.bw"], check=True)
 
     tmp_bedgraph.close()
 
@@ -99,7 +105,8 @@ def main(args):
                 args.num_samples,
                 args.genome,
                 args.data_type,
-                ref_motifs_file)
+                ref_motifs_file,
+                getattr(args, "seed", 1234))
     
         print("Current estimated shift: {:+}/{:+}".format(plus_shift, minus_shift))
 
