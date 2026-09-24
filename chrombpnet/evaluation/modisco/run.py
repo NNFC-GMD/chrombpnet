@@ -29,12 +29,24 @@ def find_executable(name):
     return shutil.which(name)
 
 
-def default_threads():
-    """CPUs allocated to this job: SLURM_CPUS_PER_TASK, else the CPU affinity mask, else os.cpu_count()."""
+def _positive_int_env(name):
     try:
-        return max(1, int(os.environ["SLURM_CPUS_PER_TASK"]))
+        value = int(os.environ[name])
     except (KeyError, ValueError):
-        pass
+        return None
+    return value if value > 0 else None
+
+
+def default_threads():
+    """Thread count for MoDISco when none is given: an explicit user NUMBA_NUM_THREADS, else OMP_NUM_THREADS,
+    else the CPUs allocated to this job (SLURM_CPUS_PER_TASK, else the CPU affinity mask, else os.cpu_count())."""
+    for name in ("NUMBA_NUM_THREADS", "OMP_NUM_THREADS"):
+        threads = _positive_int_env(name)
+        if threads is not None:
+            return threads
+    threads = _positive_int_env("SLURM_CPUS_PER_TASK")
+    if threads is not None:
+        return threads
     if hasattr(os, "sched_getaffinity"):
         return max(1, len(os.sched_getaffinity(0)))
     return os.cpu_count() or 1
@@ -56,13 +68,13 @@ def _writable_cache_dir():
 
 def modisco_env(threads=None):
     """Environment for the modisco subprocess: numba/OpenMP thread count, a writable numba cache, and the
-    interpreter's bin directory on PATH (so `tomtom` from the same environment is found)."""
+    interpreter's bin directory on PATH (so `tomtom` from the same environment is found).
+
+    threads=None uses default_threads(), so a user's NUMBA_NUM_THREADS / OMP_NUM_THREADS wins over the CPU count;
+    an explicit threads overrides both variables."""
     env = dict(os.environ)
     if threads is None:
-        try:
-            threads = int(env["NUMBA_NUM_THREADS"])  # an explicit user setting wins over the default
-        except (KeyError, ValueError):
-            threads = default_threads()
+        threads = default_threads()
     threads = max(1, int(threads))
     env["NUMBA_NUM_THREADS"] = str(threads)
     env["OMP_NUM_THREADS"] = str(threads)
@@ -98,7 +110,8 @@ def modisco_motifs(scores_h5, output_h5, max_seqlets=50000, window=500, n_leiden
 
     max_seqlets caps the seqlets per metacluster (runtime grows ~quadratically with it); window is the width
     around the region centre used for motif discovery (chrombpnet uses 500 bp to avoid AT-rich nucleosome
-    flank motifs); threads defaults to the CPUs allocated to the job.
+    flank motifs); threads (None: default_threads(), i.e. the user's NUMBA_NUM_THREADS / OMP_NUM_THREADS, else
+    the CPUs allocated to the job) sets NUMBA_NUM_THREADS / OMP_NUM_THREADS of the modisco process.
     """
     argv = [_modisco(), "motifs",
             "-i", str(scores_h5),
@@ -123,6 +136,9 @@ def modisco_report(modisco_h5, output_dir, meme_file, tomtom_lite=False, threads
     By default the matches come from MEME's `tomtom` binary (Pearson distance, q-value columns qval0..2,
     identical to chrombpnet 1.x). tomtom_lite=True uses memelite's TOMTOM-lite instead: no MEME install
     needed and much faster, but Euclidean distance and p-value columns (pval0..2).
+
+    threads sets NUMBA_NUM_THREADS / OMP_NUM_THREADS of the report process as in modisco_motifs (None:
+    default_threads()), so a caller that splits its CPUs between concurrent heads can cap the report too.
     """
     env = modisco_env(threads)
     argv = [_modisco(), "report-simple",

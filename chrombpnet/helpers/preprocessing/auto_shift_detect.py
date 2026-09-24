@@ -1,6 +1,7 @@
 import argparse
 import pyBigWig
 import pyfaidx
+import shlex
 import subprocess
 import pandas as pd
 import numpy as np
@@ -24,7 +25,7 @@ def parse_args():
     parser.add_argument('--ATAC-ref-path', type=str, default=None, help="Path to ATAC reference motifs (ATAC.ref.motifs.txt used by default)")
     parser.add_argument('--DNASE-ref-path', type=str, default=None, help="Path to DNASE reference motifs (DNASE.ref.motfis.txt used by default)")
     parser.add_argument('--num-samples', type=int, default=10000, help="Number of reads to sample from BAM/fragment file")
-    parser.add_argument('-s', '--seed', type=int, default=1234, help="Seed for sampling the reads")
+    parser.add_argument('-s', '--seed', dest='shift_seed', metavar='SEED', type=int, default=1234, help="Seed for sampling the reads")
     args = parser.parse_args()
     return args
 
@@ -94,36 +95,75 @@ def sample_filtered_tagaligns(src_tagaligns_stream, genome_file, num_lines, seed
     return sample, has_unknown_chroms
 
 def check_returncode(p):
-    # raise if a finished subprocess.Popen stream failed
+    # raise if a finished subprocess.Popen stream (or ReadStream chain) failed
     returncode = p.wait()
     if returncode != 0:
         raise subprocess.CalledProcessError(returncode, p.args)
+
+# gzip's exit status for a warning such as "trailing garbage ignored": the decompressed output is complete
+GZIP_WARNING = 2
+
+class ReadStream:
+    '''
+    A chain of subprocesses, each reading the previous one's stdout, used like a single
+    subprocess.Popen: stdout is the last process's, and wait() waits for every process and returns
+    the first non-zero exit status. A shell pipeline such as `zcat reads.gz | awk ...` reports only
+    its last command's status, which hid a truncated or corrupt gzipped input.
+    '''
+    def __init__(self, procs, args=None):
+        self.procs = procs
+        self.stdout = procs[-1].stdout
+        self.args = args if args is not None else " | ".join(shlex.join(p.args) for p in procs)
+        self.returncode = None
+
+    def wait(self):
+        self.returncode = 0
+        for p in self.procs:
+            returncode = p.wait()
+            if returncode == GZIP_WARNING and p.args[0] == "gzip":
+                continue
+            if returncode != 0 and self.returncode == 0:
+                self.returncode = returncode
+        return self.returncode
 
 def is_gz_file(filepath):
     # https://stackoverflow.com/questions/3703276/how-to-tell-if-a-file-is-gzip-compressed
     with open(filepath, 'rb') as test_f:
         return test_f.read(2) == b'\x1f\x8b'
 
+def gunzip_popen(file_path):
+    # `gzip -dc` reads .gz with GNU, BSD/macOS and busybox gzip (the macOS `zcat` only reads .Z files),
+    # and exits non-zero on a truncated or corrupt file
+    return subprocess.Popen(["gzip", "-dc", file_path], stdout=subprocess.PIPE)
+
 def bam_to_tagalign_stream(bam_path):
     p = subprocess.Popen(["bedtools", "bamtobed", "-i", bam_path], stdout=subprocess.PIPE)
     return p
+
+# each fragment becomes a + and a - strand read with the fragment's coordinates
+FRAGMENT_TO_TAGALIGN_AWK = ["awk", "-v", "OFS=\\t", '{print $1,$2,$3,1000,0,"+"; print $1,$2,$3,1000,0,"-"}']
 
 def fragment_to_tagalign_stream(fragment_file_path):
     """
     Expected format for fragment file: tsv with columns chr, start, end and optionally more columns
     """
-    frag_is_gz = is_gz_file(fragment_file_path)
-    read_method = "zcat " if frag_is_gz else "cat "
-    cmd = read_method + fragment_file_path + """ | awk -v OFS="\\t" '{print $1,$2,$3,1000,0,"+"; print $1,$2,$3,1000,0,"-"}'"""
-    p = subprocess.Popen([cmd], stdout=subprocess.PIPE, shell=True)
-    return p
+    if is_gz_file(fragment_file_path):
+        p_gz = gunzip_popen(fragment_file_path)
+        p_awk = subprocess.Popen(FRAGMENT_TO_TAGALIGN_AWK, stdin=p_gz.stdout, stdout=subprocess.PIPE)
+        p_gz.stdout.close()  # awk owns the pipe now, so gzip gets SIGPIPE if awk exits early
+        return ReadStream([p_gz, p_awk])
+    # on stdin rather than as an operand, which awk would take for a variable assignment if it contained '='
+    with open(fragment_file_path, 'rb') as f:
+        p = subprocess.Popen(FRAGMENT_TO_TAGALIGN_AWK, stdin=f, stdout=subprocess.PIPE)
+    return ReadStream([p], args=shlex.join(FRAGMENT_TO_TAGALIGN_AWK) + " < " + shlex.quote(fragment_file_path))
 
 def tagalign_stream(tagalign_file_path):
     """
     Expected format for tagAlign: tsv with columns chr, start, end, ignored, ignored, strand
     """
-    ta_is_gz = is_gz_file(tagalign_file_path)
-    p = subprocess.Popen(["zcat" if ta_is_gz else "cat", tagalign_file_path], stdout=subprocess.PIPE)
+    if is_gz_file(tagalign_file_path):
+        return ReadStream([gunzip_popen(tagalign_file_path)])
+    p = subprocess.Popen(["cat", tagalign_file_path], stdout=subprocess.PIPE)
     return p
 
 def sample_reads(bam_path, fragment_file_path, tagalign_file_path, num_samples, genome_fasta_path, seed=1234):
@@ -295,7 +335,7 @@ def main():
             args.genome,
             args.data_type,
             ref_motifs_file,
-            args.seed)
+            args.shift_seed)
     
 
 if __name__=="__main__":

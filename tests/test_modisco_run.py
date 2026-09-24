@@ -91,6 +91,7 @@ def test_report_without_motif_database(recorder, monkeypatch, tmp_path):
 
 def test_thread_env(monkeypatch, tmp_path):
     monkeypatch.delenv("NUMBA_NUM_THREADS", raising=False)
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
     monkeypatch.delenv("NUMBA_CACHE_DIR", raising=False)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     monkeypatch.setenv("SLURM_CPUS_PER_TASK", "6")
@@ -113,6 +114,44 @@ def test_thread_env(monkeypatch, tmp_path):
 
     monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path / "mine"))
     assert run.modisco_env()["NUMBA_CACHE_DIR"] == str(tmp_path / "mine")
+
+
+def test_default_threads_honours_the_user_thread_settings(monkeypatch):
+    # an explicit NUMBA_NUM_THREADS, else OMP_NUM_THREADS, is the budget; then the job's CPUs
+    monkeypatch.delenv("NUMBA_NUM_THREADS", raising=False)
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "6")
+    assert run.default_threads() == 6
+
+    monkeypatch.setenv("OMP_NUM_THREADS", "4")
+    assert run.default_threads() == 4
+    env = run.modisco_env()
+    assert env["NUMBA_NUM_THREADS"] == env["OMP_NUM_THREADS"] == "4"
+
+    monkeypatch.setenv("NUMBA_NUM_THREADS", "2")
+    assert run.default_threads() == 2
+    env = run.modisco_env()
+    assert env["NUMBA_NUM_THREADS"] == env["OMP_NUM_THREADS"] == "2"
+    env = run.modisco_env(threads=5)  # an explicit threads= still wins
+    assert env["NUMBA_NUM_THREADS"] == env["OMP_NUM_THREADS"] == "5"
+
+    monkeypatch.delenv("OMP_NUM_THREADS")
+    for invalid in ("", "0", "-3", "two"):
+        monkeypatch.setenv("NUMBA_NUM_THREADS", invalid)
+        assert run.default_threads() == 6
+        assert run.modisco_env()["NUMBA_NUM_THREADS"] == "6"
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "0")
+    assert run.default_threads() >= 1
+
+
+def test_report_threads(recorder, monkeypatch, tmp_path):
+    monkeypatch.setattr(run.shutil, "which", fake_which(set()))
+    monkeypatch.setenv("NUMBA_NUM_THREADS", "2")
+    run.modisco_report("m.h5", str(tmp_path / "rep"), "db.meme", tomtom_lite=True, threads=3)
+    run.modisco_report("m.h5", str(tmp_path / "rep"), "db.meme", tomtom_lite=True)
+    (_, explicit), (_, default) = recorder.calls
+    assert explicit["env"]["NUMBA_NUM_THREADS"] == explicit["env"]["OMP_NUM_THREADS"] == "3"
+    assert default["env"]["NUMBA_NUM_THREADS"] == default["env"]["OMP_NUM_THREADS"] == "2"
 
 
 def test_environment_is_not_mutated(recorder):

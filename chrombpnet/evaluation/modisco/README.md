@@ -30,6 +30,8 @@ modisco motifs -i chrombpnet_nobias.profile_scores.h5 -n 50000 -o modisco_result
 modisco report-simple -i modisco_results_profile_scores.h5 -o modisco_profile/ -m $(print_meme_motif_file) -n 3
 ```
 
+Both functions also take an optional `threads=` (see [Speed](#speed)).
+
 ## Settings
 
 - The pattern settings (`-z 20 -f 5 -t 20 -g 5 -j 0`, 2 Leiden runs) are the ones chrombpnet 1.x used with
@@ -57,9 +59,18 @@ bias motifs; `print_meme_motif_file` prints its path) and the top 3 matches are 
 
 ## Speed
 
-MoDISco runs on the CPU only (numba). `run.py` sets `NUMBA_NUM_THREADS` / `OMP_NUM_THREADS` for the modisco
-process from `threads`, else from `NUMBA_NUM_THREADS` if you set it, else from `SLURM_CPUS_PER_TASK`, else from
-the CPUs this process may run on. It also points `NUMBA_CACHE_DIR` at a writable directory if it is unset.
+MoDISco runs on the CPU only (numba). `run.py` sets `NUMBA_NUM_THREADS` and `OMP_NUM_THREADS` (to the same
+value) for each modisco process, both `modisco motifs` and `modisco report-simple`. The value is chosen in this
+order:
+
+1. the `threads=` argument of `modisco_motifs` / `modisco_report`, if given;
+2. otherwise `NUMBA_NUM_THREADS`, if you set it to a positive integer (your setting wins over the CPU count);
+3. otherwise `OMP_NUM_THREADS`, if you set it to a positive integer;
+4. otherwise `SLURM_CPUS_PER_TASK`;
+5. otherwise the CPUs this process may run on (the CPU affinity mask, else `os.cpu_count()`).
+
+Steps 2-5 are `run.default_threads()`. To cap MoDISco on a shared machine, export `NUMBA_NUM_THREADS`
+before running chrombpnet. `run.py` also points `NUMBA_CACHE_DIR` at a writable directory if it is unset.
 The thread count does not change the results. On a GPU node with few CPUs, prefer running the MoDISco step as
 its own CPU job with more cores.
 

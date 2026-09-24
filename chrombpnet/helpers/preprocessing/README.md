@@ -4,7 +4,7 @@ The scripts in this folder are pre-processing steps to convert input reads to Bi
 
 ## Requirements
 
-These scripts call `bedtools`, `bedGraphToBigWig` (UCSC), `awk`, `sort` and (for gzipped inputs) `zcat`; the chrombpnet pixi environments provide all of them. `chrombpnet pipeline` and `chrombpnet bias pipeline` run this step first. These scripts are tested for bulk and single-cell ATAC-seq, and for bulk DNase-seq.
+These scripts call `bedtools`, `bedGraphToBigWig` (UCSC), `sort`, `awk` and (for gzipped inputs) `gzip -dc`. The chrombpnet pixi environments provide `bedtools` and `bedGraphToBigWig` (and GNU `sort` on macOS); `awk`, `gzip` and, on Linux, `sort` come from the operating system, which ships them on every Linux distribution and on macOS. A truncated or corrupt gzipped input is an error; gzip's "trailing garbage ignored" warning is not. `chrombpnet pipeline` and `chrombpnet bias pipeline` run this step first. These scripts are tested for bulk and single-cell ATAC-seq, and for bulk DNase-seq.
 
 ## BAM/fragment file/tagAlign file to Bigwig
 
@@ -77,7 +77,7 @@ Example usage when we have an input ATAC-seq fragment file `my_sample.frag.tsv.g
 
 Most ATAC-seq (single-cell and bulk) pipelines shift Tn5 reads by +4/-5 by default. However when combining analyses with other tools, the effective shift can be different than +4/-5 due to off-by-one errors. Our script handles such cases by default by automatically detecting the enzyme shift (for ATAC and DNase) and correcting it appropriately (+4/-4 for ATAC and 0/+1 for DNase) for consistency with the training pipeline.
 
-The shift is estimated from a uniform random sample of `2 x --num-samples` reads in chromosomes of the reference fasta. The sample is seeded (`--seed`, default 1234; in `chrombpnet pipeline` / `chrombpnet bias pipeline` the `--seed` argument), so the estimate is reproducible.
+The shift is estimated from a uniform random sample of `2 x --num-samples` reads in chromosomes of the reference fasta. The sample is seeded (`-s/--seed` of `reads_to_bigwig` and `auto_shift_detect`, default 1234), so the estimate is reproducible. `chrombpnet pipeline` / `chrombpnet bias pipeline` always use seed 1234 for this sample: their `--seed` is the training seed, and changing it does not change the reads the shift is estimated from.
 
 In rare cases, you may see an error such as "Input file shifts inconsistent" or "Input shift is non-standard". In such cases, if you know the actual shift for your input file (typically +0/+0 for BAMs, and +4/-5 for ATAC fragment/tagAligns) you can supply them using the `--plus-shift` and `--minus-shift` flags. However, if you are uncertain, please reach out to us by submitting an [Issue](https://github.com/kundajelab/chrombpnet/issues).
 
