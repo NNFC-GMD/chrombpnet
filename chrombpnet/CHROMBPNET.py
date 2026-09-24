@@ -10,7 +10,7 @@ import pandas as pd
 import logging
 logging.getLogger('matplotlib.font_manager').disabled = True
 
-MODEL_COMMANDS = ["pipeline", "train", "qc", "bias", "pred_bw", "contribs_bw", "footprints"]
+MODEL_COMMANDS = ["pipeline", "train", "qc", "bias", "pred_bw", "contribs_bw", "footprints", "export"]
 
 def runs_modisco(args):
 	# the commands that end with modisco motifs + modisco report (train / bias train stop after training)
@@ -135,6 +135,12 @@ def main():
 	
 		import chrombpnet.evaluation.marginal_footprints.marginal_footprinting as marginal_footprinting
 		marginal_footprinting.main(args)
+
+	elif args.cmd == "export":
+
+		from chrombpnet.helpers.postprocessing.export_legacy_h5 import export_legacy_h5
+		out = export_legacy_h5(args.model_h5, args.output)
+		print("wrote {} ({})".format(out, args.format))
 
 	elif args.cmd == "prep":
 	

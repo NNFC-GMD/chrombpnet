@@ -10,7 +10,7 @@ desc = """======================================================================
 def read_parser(argv=None):
 
         parser = argparse.ArgumentParser(description=desc,formatter_class=RawTextHelpFormatter)
-        subparsers = parser.add_subparsers(help="Must be eithier 'pipeline', 'train', 'qc', 'bias', 'prep', 'pred_bw', 'contribs_bw' or 'footprints'.", required=True, dest='cmd')
+        subparsers = parser.add_subparsers(help="Must be eithier 'pipeline', 'train', 'qc', 'bias', 'prep', 'pred_bw', 'contribs_bw', 'footprints' or 'export'.", required=True, dest='cmd')
         
         # main parsers
         
@@ -40,6 +40,7 @@ def read_parser(argv=None):
         #custom_preds_parser = subparsers.add_parser("pred_custom", help="Make model predictions on custom sequences and output to .h5 file")
         #custom_contribs_parser = subparsers.add_parser("contribs_custom", help="Get contribution on custom sequences and output to .h5 file")
         footprints_parser = subparsers.add_parser("footprints", help="Get marginal footprinting for given model and given motifs")
+        export_parser = subparsers.add_parser("export", help="Export a model for TF-Keras 2.x readers (chrombpnet 1.x, variant-scorer, bpnet-lite)")
         #variants_parser = subparsers.add_parser("snp_score", help="Score SNPs with model")
 
         def general_training_args(required_train, optional_train):
@@ -291,6 +292,19 @@ def read_parser(argv=None):
         optional_ftps.add_argument("--ylim", default=None, nargs=2, type=float, metavar=("YMIN", "YMAX"), required=False, help="lower and upper y-limits for plotting the motif footprint, e.g. \
         --ylim 0 0.8. If this is not set, ylim will be autodetermined.")
   
+        # Export a model for TF-Keras 2.x readers
+
+        export_parser._action_groups.pop()
+        required_export = export_parser.add_argument_group('required arguments')
+        optional_export = export_parser.add_argument_group('optional arguments')
+
+        required_export.add_argument("-m", "--model-h5", type=str, required=True, help="Model to export: bias / chrombpnet / chrombpnet_nobias .h5 or .keras file (written by chrombpnet 2.x or 1.x)")
+        required_export.add_argument("-o", "--output", type=str, required=True, help="Output .h5 file")
+        optional_export.add_argument("--legacy-h5", dest="format", action="store_const", const="legacy-h5", default="legacy-h5",
+                        help="Write a TF-Keras 2.x full-model .h5 file, in the layout chrombpnet 1.x wrote (the default and, for now, "
+                        "the only format). TF-Keras loads it with load_model(path, compile=False); a full chrombpnet model also needs "
+                        "custom_objects={'chrombpnet_logsumexp': ...} for its count head (see chrombpnet/helpers/postprocessing/README.md)")
+
         # Do variant scoring
         
         #variants_parser._action_groups.pop()

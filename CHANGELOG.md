@@ -48,8 +48,9 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
   statistically, not bitwise, equivalent to 1.x models. The seed now also controls the initialisation of the
   no-bias ChromBPNet model.
 - New model files (`bias.h5`, `bias_model_scaled.h5`, `chrombpnet.h5`, `chrombpnet_nobias.h5`) keep their names
-  but are written by Keras 3, so chrombpnet 1.x and TensorFlow 2.x cannot load them. chrombpnet 1.x models still
-  load in 2.x: on load, a registered `LogSumExp` layer replaces the logsumexp `Lambda` of `chrombpnet.h5`.
+  but are written by Keras 3, so chrombpnet 1.x and TensorFlow 2.x cannot load them (`chrombpnet export` writes a
+  copy they can load, see below). chrombpnet 1.x models still load in 2.x: on load, a registered `LogSumExp` layer
+  replaces the logsumexp `Lambda` of `chrombpnet.h5`.
 - JAX allocates GPU memory on demand: importing chrombpnet sets `XLA_PYTHON_CLIENT_PREALLOCATE=false` unless you
   set it yourself. The pixi environments (so `gpu-check` too) and the Docker image also set it; under `pixi run`
   the environment's value wins over an `export`.
@@ -76,6 +77,19 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
   (`SLURM_CPUS_PER_TASK`, else the CPU affinity mask).
 - Removed: the legacy modisco-0.5 scripts (`evaluation/modisco/{run_modisco,fetch_tomtom,visualize_motif_matches}.py`,
   `modisco.sh`) and `evaluation/invivo_footprints/`.
+
+### New command
+- `chrombpnet export -m model.(h5|keras) -o out.h5 [--legacy-h5]` writes a bias, chrombpnet or chrombpnet_nobias
+  model as a TF-Keras 2.x full-model .h5 file, in the layout chrombpnet 1.x wrote (TF-Keras 2.12): Keras 2
+  `model_config`, `model_weights/<layer>/<layer>/kernel:0` datasets with the `layer_names` / `weight_names`
+  attributes, nested bias / no-bias models stored as in 1.x `chrombpnet.h5`. Keras 3 auto-generated names are
+  written as TF-Keras named them (`functional` -> `model`, `add_4` ... -> `add` ...). TF-Keras 2.x (tested with
+  TF 2.8 and 2.12, `load_model(..., compile=False)`) and bpnet-lite's `BPNet.from_chrombpnet` /
+  `ChromBPNet.from_chrombpnet` read these files; 1.x files re-exported this way have the same datasets, attributes
+  and model config. There is no `training_config` or optimizer state. The count head of a full chrombpnet model is a
+  `Lambda` that names its function instead of storing Python bytecode, so TF-Keras needs
+  `custom_objects={"chrombpnet_logsumexp": ...}` for it (see `chrombpnet/helpers/postprocessing/README.md`);
+  `model_io.load_model` maps it to `LogSumExp`.
 
 ### New optional flags (the defaults keep the 1.x behaviour)
 - Training: `--optimizer {adam,muon}`, `--muon-lr`, `--ema`, `--lr-schedule {constant,cosine}`,
