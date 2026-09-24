@@ -127,7 +127,7 @@ def getModelGivenModelOptionsAndWeightInits(args, model_params):
 
     # the output layer names are a contract (log keys, hyperparameter and interpretation code)
     profile_out = Add(name="logits_profile_predictions", dtype=out_dtype)([output_wo_bias[0],bias_output[0]])
-    concat_counts = Concatenate(axis=-1, dtype=out_dtype)([output_wo_bias[1], bias_output[1]])
+    concat_counts = Concatenate(axis=-1, name="concatenate", dtype=out_dtype)([output_wo_bias[1], bias_output[1]])
     count_out = LogSumExp(name="logcount_predictions", dtype=out_dtype)(concat_counts)
 
     # instantiate keras Model with inputs and outputs
