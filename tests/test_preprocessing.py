@@ -376,24 +376,28 @@ def test_reads_to_bigwig_truncated_gz_raises(tmp_path, genome, kind, no_st):
 
 
 @pytest.mark.needs_cli
-def test_reads_to_bigwig_propagates_bedgraphtobigwig_failure(tmp_path, genome):
+@pytest.mark.parametrize("no_st", [False, True])
+def test_reads_to_bigwig_fails_on_contig_missing_from_chrom_sizes(tmp_path, genome, no_st, capsys):
+    # reads on chr2 but chrom sizes without it (e.g. a BAM with *_random contigs and a main-chromosome chrom sizes
+    # file): bedtools genomecov only warns, so bedGraphToBigWig must fail the run with a hint and write no bigwig.
     needs_bigwig_tools()
     fasta, sizes = genome
-    tagalign = write_tagalign(tmp_path / "reads.tagAlign", random_reads(20))
+    tagalign = write_tagalign(tmp_path / "reads.tagAlign", random_reads(200))
     only_chr1 = tmp_path / "chr1.chrom.sizes"
-    only_chr1.write_text("chr1\t{}\n".format(CHROM_LEN))  # bedGraphToBigWig rejects the chr2 coverage
+    only_chr1.write_text("chr1\t{}\n".format(CHROM_LEN))
     with pytest.raises(subprocess.CalledProcessError):
-        reads_to_bigwig.generate_bigwig(None, None, tagalign, str(tmp_path / "out"), fasta, False, None, False,
+        reads_to_bigwig.generate_bigwig(None, None, tagalign, str(tmp_path / "out"), fasta, False, None, no_st,
                                         str(only_chr1), 4, -4)
+    assert "must be listed in the chrom sizes file" in capsys.readouterr().err
+    assert not (tmp_path / "out_unstranded.bw").exists()
 
 
 @pytest.mark.needs_cli
-def test_reads_to_bigwig_empty_bedgraph_raises(tmp_path, genome):
-    # bedtools genomecov fails (missing chrom sizes) inside the shell pipeline, whose exit status is the last sort's
+def test_reads_to_bigwig_missing_chrom_sizes_raises(tmp_path, genome):
     needs_bigwig_tools()
     fasta, sizes = genome
     tagalign = write_tagalign(tmp_path / "reads.tagAlign", random_reads(20))
-    with pytest.raises(RuntimeError, match="Empty bedGraph"):
+    with pytest.raises(subprocess.CalledProcessError):
         reads_to_bigwig.generate_bigwig(None, None, tagalign, str(tmp_path / "out"), fasta, False, None, False,
                                         str(tmp_path / "missing.chrom.sizes"), 4, -4)
 

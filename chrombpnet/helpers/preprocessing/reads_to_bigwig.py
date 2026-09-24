@@ -2,6 +2,7 @@ import argparse
 import pyBigWig
 import pyfaidx
 import subprocess
+import sys
 import tempfile
 import os
 import numpy as np
@@ -62,24 +63,32 @@ def generate_bigwig(input_bam_file, input_fragment_file, input_tagalign_file, ou
         print("Making BedGraph (Do not filter chromosomes not in reference fasta)")
 
         with open(tmp_bedgraph.name, 'w') as f:
-            p2 = subprocess.Popen(cmd, stdin=p1.stdout, stdout=f, shell=True)
+            p2 = subprocess.Popen(["bash", "-o", "pipefail", "-c", cmd], stdin=p1.stdout, stdout=f)
             p1.stdout.close()
             p2.communicate()
     else:
         print("Making BedGraph (Filter chromosomes not in reference fasta)")
 
         with open(tmp_bedgraph.name, 'w') as f:
-            p2 = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=f, shell=True)
+            p2 = subprocess.Popen(["bash", "-o", "pipefail", "-c", cmd], stdin=subprocess.PIPE, stdout=f)
             auto_shift_detect.stream_filtered_tagaligns(p1, genome_fasta_file, p2)
             p2.communicate()
     auto_shift_detect.check_returncode(p2)
     auto_shift_detect.check_returncode(p1)
-    # only the last command's exit status is checked; a failure earlier in the pipeline leaves no coverage
+    # the pipeline runs with pipefail, so any failing stage (e.g. genomecov on a contig missing from the chrom
+    # sizes file) raised above; an empty bedGraph means no reads were left after filtering
     if os.path.getsize(tmp_bedgraph.name) == 0:
         raise RuntimeError("Empty bedGraph from `{}`: no reads left after filtering, or a command in the pipeline failed (see its error above)".format(cmd.strip()))
 
     print("Making Bigwig")
-    subprocess.run(["bedGraphToBigWig", tmp_bedgraph.name, chrom_sizes_file, output_prefix + "_unstranded.bw"], check=True)
+    try:
+        subprocess.run(["bedGraphToBigWig", tmp_bedgraph.name, chrom_sizes_file, output_prefix + "_unstranded.bw"], check=True)
+    except subprocess.CalledProcessError:
+        # bedtools genomecov only warns about reads on contigs missing from the chrom sizes, then bedGraphToBigWig fails
+        print("bedGraphToBigWig failed: every chromosome/contig with reads must be listed in the chrom sizes file {} "
+              "(use the full chrom sizes of the reference the reads were aligned to, not a main-chromosomes-only "
+              "file)".format(chrom_sizes_file), file=sys.stderr)
+        raise
 
     tmp_bedgraph.close()
 
