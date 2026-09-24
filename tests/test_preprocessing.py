@@ -216,7 +216,20 @@ def test_reads_to_bigwig_propagates_bedgraphtobigwig_failure(tmp_path, genome):
     needs_bigwig_tools()
     fasta, sizes = genome
     tagalign = write_tagalign(tmp_path / "reads.tagAlign", random_reads(20))
+    only_chr1 = tmp_path / "chr1.chrom.sizes"
+    only_chr1.write_text("chr1\t{}\n".format(CHROM_LEN))  # bedGraphToBigWig rejects the chr2 coverage
     with pytest.raises(subprocess.CalledProcessError):
+        reads_to_bigwig.generate_bigwig(None, None, tagalign, str(tmp_path / "out"), fasta, False, None, False,
+                                        str(only_chr1), 4, -4)
+
+
+@pytest.mark.needs_cli
+def test_reads_to_bigwig_empty_bedgraph_raises(tmp_path, genome):
+    # bedtools genomecov fails (missing chrom sizes) inside the shell pipeline, whose exit status is the last sort's
+    needs_bigwig_tools()
+    fasta, sizes = genome
+    tagalign = write_tagalign(tmp_path / "reads.tagAlign", random_reads(20))
+    with pytest.raises(RuntimeError, match="Empty bedGraph"):
         reads_to_bigwig.generate_bigwig(None, None, tagalign, str(tmp_path / "out"), fasta, False, None, False,
                                         str(tmp_path / "missing.chrom.sizes"), 4, -4)
 

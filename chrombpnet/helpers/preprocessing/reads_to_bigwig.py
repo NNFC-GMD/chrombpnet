@@ -74,6 +74,9 @@ def generate_bigwig(input_bam_file, input_fragment_file, input_tagalign_file, ou
             p2.communicate()
     auto_shift_detect.check_returncode(p2)
     auto_shift_detect.check_returncode(p1)
+    # only the last command's exit status is checked; a failure earlier in the pipeline leaves no coverage
+    if os.path.getsize(tmp_bedgraph.name) == 0:
+        raise RuntimeError("Empty bedGraph from `{}`: no reads left after filtering, or a command in the pipeline failed (see its error above)".format(cmd.strip()))
 
     print("Making Bigwig")
     subprocess.run(["bedGraphToBigWig", tmp_bedgraph.name, chrom_sizes_file, output_prefix + "_unstranded.bw"], check=True)
