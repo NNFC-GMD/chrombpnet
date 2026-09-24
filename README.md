@@ -16,8 +16,8 @@ ChromBPNet (shown in the image as `Bias-Factorized ChromBPNet`) is a fully convo
 
 > **This fork (ChromBPNet 2.x)** runs on Keras 3 with the JAX backend instead of TensorFlow. It runs natively
 > on CUDA 13 GPUs (H100, B200, RTX PRO 6000 Blackwell), with a single NumPy 2 environment and a native JAX
-> DeepSHAP. The commands, inputs and outputs are the same as in 1.x, and chrombpnet 1.x models load as they
-> are. See the [CHANGELOG](CHANGELOG.md) for what changed.
+> DeepSHAP. The commands, inputs and outputs are the same as in 1.x except for the changes listed in the
+> [CHANGELOG](CHANGELOG.md), and chrombpnet 1.x models load as they are.
 
 ## Table of contents
 
@@ -83,13 +83,12 @@ you have to provide these yourself:
   `brew install pango`.
 - **pyBigWig** has PyPI wheels only for Linux x86_64. Elsewhere it builds from source, which needs a C compiler
   and zlib headers.
-- GNU `shuf` (coreutils) on macOS, for Tn5 shift detection.
 
 ### 3. Docker or Apptainer
 
 ```
 docker run --rm --gpus all ghcr.io/nnfc-gmd/chrombpnet:latest-cuda13 chrombpnet --help
-apptainer exec --nv docker://ghcr.io/nnfc-gmd/chrombpnet:latest-cuda13 chrombpnet --help
+apptainer exec --nv --cleanenv docker://ghcr.io/nnfc-gmd/chrombpnet:latest-cuda13 chrombpnet --help
 docker build -t chrombpnet:cuda13 .       # build it yourself; see the Dockerfile header for cuda12 / CPU images
 ```
 
@@ -98,6 +97,12 @@ The image contains no CUDA toolkit. The host provides only the driver, through t
 (`--gpus`) or `apptainer --nv`. Images are pushed to ghcr.io for release tags. If there is none for your
 version yet, build locally.
 
+Apptainer passes the host environment into the container and binds `$HOME`. The image already ignores the
+host's `PYTHONPATH`, `PYTHONHOME` and `~/.local` Python packages. `--cleanenv` also keeps out every other host
+variable, including ones you may want. Pass those explicitly, for example
+`--env CUDA_VISIBLE_DEVICES="$CUDA_VISIBLE_DEVICES"` when a scheduler has picked your GPUs, or
+`--env XLA_PYTHON_CLIENT_MEM_FRACTION=0.25`.
+
 ## GPU notes
 
 - **Driver.** CUDA 13 needs NVIDIA driver >= 580 (the `nvidia-smi` header shows `CUDA Version: 13.x`). H100
@@ -105,10 +110,15 @@ version yet, build locally.
   `cuda12` environment.
 - **No `module load cuda`, no `LD_LIBRARY_PATH`.** JAX brings its own CUDA, cuDNN and NCCL as pip wheels.
   System CUDA libraries found first through `LD_LIBRARY_PATH` shadow them and break start-up.
-- **Memory.** Importing chrombpnet sets `XLA_PYTHON_CLIENT_PREALLOCATE=false` unless you set it yourself. JAX
-  then allocates GPU memory as it needs it, instead of reserving 75% of the card at start-up. On a GPU shared
-  with other jobs, also cap it, e.g. `export XLA_PYTHON_CLIENT_MEM_FRACTION=0.25`. The value is a fraction of
-  the card's total memory.
+- **Memory.** `XLA_PYTHON_CLIENT_PREALLOCATE=false` is set by the pixi environments (so it also covers
+  `gpu-check`), by the Docker image, and by importing chrombpnet when it is unset. JAX then allocates GPU memory
+  as it needs it, instead of reserving 75% of the card at start-up. Under `pixi run` the environment's value
+  wins over your `export`. To preallocate anyway, run
+  `pixi run env XLA_PYTHON_CLIENT_PREALLOCATE=true chrombpnet ...`.
+- **Shared GPUs.** JAX does not return memory it has allocated until the process ends. DeepSHAP picks its batch
+  size from the model size and the free GPU memory, so `chrombpnet pipeline` keeps that memory through the
+  TF-MoDISco step that follows. On a GPU shared with other jobs, cap the process, e.g.
+  `export XLA_PYTHON_CLIENT_MEM_FRACTION=0.25`. The value is a fraction of the card's total memory.
 - **Backend.** Importing chrombpnet also sets `KERAS_BACKEND=jax`. If your own code imports `keras` before
   chrombpnet, set `KERAS_BACKEND=jax` in the environment yourself.
 - **Clusters.** [`workflows/slurm/`](workflows/slurm/) has a SLURM template for H100/B200 clusters, and
@@ -292,12 +302,16 @@ commands take which flag.
   [pre-trained bias models](https://zenodo.org/records/7443683/files/bias_models.zip?download=1). Use them with
   `-b`, `pred_bw`, `contribs_bw`, `footprints` and so on. The loader replaces the logsumexp `Lambda` layer of
   `chrombpnet.h5` and never runs stored bytecode.
+- **Counts-head DeepSHAP needs `chrombpnet_nobias.h5`.** `contribs_bw` refuses the counts head of a full
+  `chrombpnet.h5` (1.x or 2.x), because its counts output is a logsumexp of the bias and TF-model heads. Run it
+  on `chrombpnet_nobias.h5`, as the pipelines do, or pass `-pc profile`.
 - **New models cannot go the other way.** Model files keep their `.h5` names, but Keras 3 writes them.
   TensorFlow 2.x chrombpnet cannot load them, and neither can tools that read the HDF5 weights directly.
 - **Contribution-score files keep the 1.x layout**: `/raw/seq`, `/shap/seq`, `/projected_shap/seq`, shape
   (N, 4, L), Blosc-compressed. To read them with h5py, `import hdf5plugin` first.
 - **Results match 1.x statistically, not bit for bit.** Initial weights and random streams differ from
-  TensorFlow for the same seed. DeepSHAP references are now seeded. EarlyStopping restores the best epoch. See the
+  TensorFlow for the same seed. DeepSHAP references, the reads used for Tn5/DNase shift estimation and the
+  nonpeak subsample behind the outlier thresholds are now seeded. EarlyStopping restores the best epoch. See the
   [CHANGELOG](CHANGELOG.md).
 
 ## How to Cite

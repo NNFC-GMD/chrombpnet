@@ -2,6 +2,7 @@ from __future__ import division, print_function, absolute_import
 import importlib.util
 import re
 import sys
+import jax
 import keras
 import chrombpnet.training.utils.argmanager as argmanager
 import chrombpnet.training.utils.losses as losses
@@ -34,11 +35,22 @@ def get_model(args, parameters):
     print("got the model")
     return model, architecture_module
 
+class Float32ModelCheckpoint(keras.callbacks.ModelCheckpoint):
+    """ModelCheckpoint that writes the model with float32 policies (used under --precision bf16), so that the
+    best-so-far model left by an interrupted run loads and runs in float32 like the final one. The layers go back
+    to their training policies right after each save."""
+
+    def _save_model(self, epoch, batch, logs):
+        # every ModelCheckpoint save goes through _save_model (tests/test_training.py checks the interrupted case)
+        with runtime.float32_policy(self.model):
+            super()._save_model(epoch, batch, logs)
+
 def fit_and_evaluate(model,train_gen,valid_gen,args,architecture_module):
     model_output_path_h5_name=args.output_prefix+".h5"
     model_output_path_logs_name=args.output_prefix+".log"
 
-    checkpointer = keras.callbacks.ModelCheckpoint(filepath=model_output_path_h5_name, monitor="val_loss", mode="min",  verbose=1, save_best_only=True)
+    checkpoint_class = Float32ModelCheckpoint if runtime.bf16_active() else keras.callbacks.ModelCheckpoint
+    checkpointer = checkpoint_class(filepath=model_output_path_h5_name, monitor="val_loss", mode="min",  verbose=1, save_best_only=True)
     # Keras 3 restores the best weights at the end of training even when --epochs is reached without an early stop
     earlystopper = keras.callbacks.EarlyStopping(monitor='val_loss', mode="min", patience=args.early_stop, verbose=1, restore_best_weights=True)
     history= callbacks.LossHistory(model_output_path_logs_name+".batch",args.trackables)
@@ -107,10 +119,12 @@ def json_safe_args(args):
 def main(args):
 
     require_jax_backend()
-    runtime.assert_gpu_if_requested(getattr(args, "device", None) or "auto")
-    # --precision bf16 sets a process-wide dtype policy; restore it afterwards so later pipeline steps
-    # (predict, interpret) build and load models as before
+    # training needs the backends now: create and log them even for --device auto
+    runtime.assert_gpu_if_requested(getattr(args, "device", None) or "auto", initialize=True)
+    # --precision bf16 / highest set a process-wide dtype policy / matmul precision; restore them afterwards so
+    # later pipeline steps (predict, interpret) build, load and run models as before
     previous_policy = keras.config.dtype_policy()
+    previous_matmul_precision = jax.config.jax_default_matmul_precision
     runtime.configure_precision(getattr(args, "precision", None) or "default")
     try:
         # read tab-seperated parameters file
@@ -143,6 +157,7 @@ def main(args):
         run_info = runtime.runtime_info()
     finally:
         keras.config.set_dtype_policy(previous_policy)
+        jax.config.update("jax_default_matmul_precision", previous_matmul_precision)
 
     # store arguments and and parameters to checkpoint
     with open(args.output_prefix+'.args.json', 'w') as fp:

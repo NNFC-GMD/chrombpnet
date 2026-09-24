@@ -36,9 +36,11 @@ def multinomial_nll(true_counts, logits):
     log_probs = ops.log_softmax(logits, axis=-1)
     # multiply_no_nan: a zero count contributes 0 even where log_prob is -inf
     weighted = ops.where(true_counts > 0, true_counts * log_probs, 0.0)
-    # log(n!) and sum_i log(y_i!); lgamma(1) = lgamma(2) = 0 exactly, so skip those (float32 lgamma is not exact
-    # there and ~1000 mostly-zero bins would otherwise add a spurious offset)
-    log_factorial = lambda c: ops.where(c > 1, _gammaln(c + 1.0), 0.0)
+    # log(n!) and sum_i log(y_i!) as lgamma(c + 1); lgamma(1) = lgamma(2) = 0 exactly, so skip c = 0 and c = 1
+    # (float32 lgamma is not exact there and ~1000 mostly-zero bins would otherwise add a spurious offset).
+    # Fractional counts (e.g. a normalized bigwig) keep their nonzero lgamma(c + 1), as in tfp.
+    log_factorial = lambda c: ops.where(ops.logical_or(ops.equal(c, 0.0), ops.equal(c, 1.0)), 0.0,
+                                        _gammaln(c + 1.0))
     log_likelihood = (ops.sum(weighted, axis=-1)
                       + log_factorial(counts_per_example)
                       - ops.sum(log_factorial(true_counts), axis=-1))

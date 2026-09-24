@@ -41,9 +41,10 @@ instead of training on the CPU. `pixi run --frozen` uses `pixi.lock` exactly as 
 
 ## Memory and threads
 
-* chrombpnet asks JAX to allocate GPU memory on demand (`XLA_PYTHON_CLIENT_PREALLOCATE=false`), unlike JAX's
-  default of reserving 75% of the card. On a GPU shared with other jobs, also set
-  `XLA_PYTHON_CLIENT_MEM_FRACTION` (a fraction of the card's total memory).
+* JAX allocates GPU memory on demand (`XLA_PYTHON_CLIENT_PREALLOCATE=false`, set by the pixi environment, so
+  `gpu-check` does too), unlike its default of reserving 75% of the card. It does not return that memory until
+  the process ends, and DeepSHAP picks its batch size from the free GPU memory. On a GPU shared with other jobs,
+  also set `XLA_PYTHON_CLIENT_MEM_FRACTION` (a fraction of the card's total memory).
 * `OMP_NUM_THREADS` and `NUMBA_NUM_THREADS` follow `--cpus-per-task`. TF-MoDISco (numba) is the CPU-heavy step
   at the end of the pipeline, so more CPUs shorten it. `--tomtom-lite` makes the motif report much faster.
 * Host memory: the pipeline loads all training sequences, so budget about 16 GB for a typical ATAC dataset.
@@ -52,7 +53,14 @@ instead of training on the CPU. `pixi run --frozen` uses `pixi.lock` exactly as 
 
 ```bash
 apptainer pull chrombpnet.sif docker://ghcr.io/nnfc-gmd/chrombpnet:latest-cuda13
-apptainer exec --nv chrombpnet.sif chrombpnet pipeline ...
+apptainer exec --nv --cleanenv --env CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}" \
+    chrombpnet.sif chrombpnet pipeline ...
 ```
 
-`--nv` injects the host driver. The image needs no CUDA module and sets `KERAS_BACKEND=jax` itself.
+`--nv` injects the host driver. The image needs no CUDA module and sets `KERAS_BACKEND=jax` itself. It also
+ignores a host `PYTHONPATH`/`PYTHONHOME` (e.g. from `module load python`) and the packages in `~/.local`, which
+Apptainer would otherwise see through the bound `$HOME`. `--cleanenv` keeps out the rest of the job's
+environment, including the `CUDA_VISIBLE_DEVICES` that SLURM sets for the allocated GPUs, hence the `--env`.
+Drop that `--env` where the scheduler does not set the variable (without `--gres=gpu`): an empty
+`CUDA_VISIBLE_DEVICES` hides every GPU. Forward other variables the same way, e.g.
+`--env XLA_PYTHON_CLIENT_MEM_FRACTION=0.5` on a shared GPU.

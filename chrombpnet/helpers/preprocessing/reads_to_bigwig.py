@@ -26,7 +26,7 @@ def parse_args():
     parser.add_argument('--ATAC-ref-path', type=str, default=None, help="Path to ATAC reference motifs (chrombpnet/data/ATAC.ref.motifs.txt used by default)")
     parser.add_argument('--DNASE-ref-path', type=str, default=None, help="Path to DNASE reference motifs (chrombpnet/data/DNASE.ref.motifs.txt used by default)")
     parser.add_argument('--num-samples', type=int, default=10000, help="Number of reads to sample from BAM/fragment/tagAlign file for shift estimation")
-    parser.add_argument('-s', '--seed', type=int, default=1234, help="Seed for sampling the reads used in shift estimation")
+    parser.add_argument('-s', '--seed', dest='shift_seed', metavar='SEED', type=int, default=1234, help="Seed for sampling the reads used in shift estimation")
     args = parser.parse_args()
 
     return args
@@ -99,6 +99,8 @@ def main(args):
                 ref_motifs_file =  get_default_data_path(DefaultDataFile.dnase_ref_motifs)
     
         print("Estimating enzyme shift in input file")
+        # the read sample has its own seed (-s/--seed of this script, else 1234): the pipelines' --seed is the
+        # training seed, and changing it must not change the reads the shift is estimated from
         plus_shift, minus_shift = auto_shift_detect.compute_shift(args.input_bam_file,
                 args.input_fragment_file,
                 args.input_tagalign_file,
@@ -106,7 +108,7 @@ def main(args):
                 args.genome,
                 args.data_type,
                 ref_motifs_file,
-                getattr(args, "seed", 1234))
+                getattr(args, "shift_seed", 1234))
     
         print("Current estimated shift: {:+}/{:+}".format(plus_shift, minus_shift))
 

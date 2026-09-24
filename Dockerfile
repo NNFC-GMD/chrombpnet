@@ -20,8 +20,11 @@ COPY pyproject.toml pixi.lock conda-pypi-map.json ./
 RUN CONDA_OVERRIDE_CUDA=${CUDA_VERSION} pixi install --locked -e ${PIXI_ENV} --skip chrombpnet
 COPY README.md LICENSE MANIFEST.in ./
 COPY chrombpnet ./chrombpnet
+# The runtime ENV below sets XLA_PYTHON_CLIENT_PREALLOCATE=false; drop pixi's copy from the hook so that
+# `docker run -e XLA_PYTHON_CLIENT_PREALLOCATE=true` still works through the entrypoint.
 RUN CONDA_OVERRIDE_CUDA=${CUDA_VERSION} pixi install --locked -e ${PIXI_ENV} \
  && pixi shell-hook -e ${PIXI_ENV} --shell=bash --as-is > /opt/chrombpnet/shell-hook.sh \
+ && sed -i '/^export XLA_PYTHON_CLIENT_PREALLOCATE=/d' /opt/chrombpnet/shell-hook.sh \
  && printf '#!/bin/bash\n. /opt/chrombpnet/shell-hook.sh\nexec "$@"\n' > /opt/chrombpnet/entrypoint.sh \
  && chmod 0755 /opt/chrombpnet/entrypoint.sh \
  && CONDA_OVERRIDE_CUDA=${CUDA_VERSION} JAX_PLATFORMS=cpu pixi run -e ${PIXI_ENV} --as-is python -c \
@@ -46,8 +49,14 @@ RUN apt-get update \
 COPY --from=build /opt/chrombpnet /opt/chrombpnet
 # The entrypoint sources the pixi activation; these also cover `apptainer exec` and `docker run --entrypoint`,
 # which bypass it. No LD_LIBRARY_PATH: it would shadow the CUDA libraries of the JAX wheels.
+# Apptainer passes the host environment and binds $HOME: ignore the user site (~/.local/lib/python3.x) and any
+# host PYTHONPATH/PYTHONHOME (e.g. from `module load`), so only the image's packages are imported. Image values
+# win over host ones (Apptainer unsets a host variable that the image sets to empty); Python treats empty as unset.
 ENV PATH=/opt/chrombpnet/.pixi/envs/${PIXI_ENV}/bin:${PATH} \
     CONDA_PREFIX=/opt/chrombpnet/.pixi/envs/${PIXI_ENV} \
+    PYTHONNOUSERSITE=1 \
+    PYTHONPATH="" \
+    PYTHONHOME="" \
     KERAS_BACKEND=jax \
     XLA_PYTHON_CLIENT_PREALLOCATE=false \
     NVIDIA_VISIBLE_DEVICES=all \

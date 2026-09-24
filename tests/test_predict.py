@@ -259,3 +259,110 @@ def test_predict_to_bigwig(dataset, tmp_path):
         metrics = json.load(open(prefix + "_{}_metrics.json".format(name)))
         assert all(type(v) is float for v in float_leaves(metrics))
     assert open(tmp_path / "stats.txt").read().startswith("Min\t")
+
+
+# ---------------------------------------------------------------- -d/--debug-chr on a 2-chromosome genome
+
+TWO_CHROMS = [("chr1", 8000), ("chr2", 6000)]
+# interleaved chromosomes; chr2:5900 runs past the end of chr2 and is dropped (regions_used)
+TWO_CHROM_CENTERS = [("chr2", 1000), ("chr1", 1000), ("chr1", 3000), ("chr2", 5900), ("chr2", 3000), ("chr1", 5000),
+                     ("chr2", 2000)]
+
+
+@pytest.fixture(scope="module")
+def two_chrom(tmp_path_factory):
+    d = tmp_path_factory.mktemp("two_chrom")
+    rng = np.random.RandomState(1)
+    with open(d / "genome.fa", "w") as f:
+        for c, n in TWO_CHROMS:
+            seq = "".join(rng.choice(list("ACGT"), n))
+            f.write(">{}\n".format(c))
+            f.writelines(seq[i:i + 60] + "\n" for i in range(0, n, 60))
+    (d / "chrom.sizes").write_text("".join("{}\t{}\n".format(c, n) for c, n in TWO_CHROMS))
+    rows = [[c, m - 250, m + 250, ".", ".", ".", ".", ".", ".", 250] for c, m in TWO_CHROM_CENTERS]
+    pd.DataFrame(rows).to_csv(d / "peaks.bed", sep="\t", header=False, index=False)
+    return d
+
+
+def _kept_regions(d, chroms):
+    regions = pd.read_csv(d / "peaks.bed", sep="\t", names=NARROWPEAK_SCHEMA)
+    mid = regions.start + regions.summit
+    fits = (mid + INPUTLEN // 2) <= regions.chr.map(dict(TWO_CHROMS))
+    return regions[regions.chr.isin(chroms) & fits].reset_index(drop=True)
+
+
+@pytest.mark.parametrize("debug_chr", [["chr2"], ["chr1", "chr2"]])
+def test_pred_bw_debug_chr(dataset, two_chrom, tmp_path, monkeypatch, debug_chr):
+    import chrombpnet.CHROMBPNET as cli
+    prefix = str(tmp_path / "pred")
+    monkeypatch.setattr(sys, "argv", ["chrombpnet", "pred_bw", "-bm", str(dataset / "bias.h5"),
+                                      "-cm", str(dataset / "chrombpnet.h5"),
+                                      "-cmb", str(dataset / "chrombpnet_nobias.h5"), "-r", str(two_chrom / "peaks.bed"),
+                                      "-g", str(two_chrom / "genome.fa"), "-c", str(two_chrom / "chrom.sizes"),
+                                      "-op", prefix, "-t", "0", "-bs", "2", "-d"] + debug_chr)
+    cli.main()
+
+    kept = _kept_regions(two_chrom, debug_chr)
+    assert len(kept) == (3 if debug_chr == ["chr2"] else 6)
+    with pyfaidx.Fasta(str(two_chrom / "genome.fa")) as genome:
+        seqs = data_utils.get_seq(kept, genome, INPUTLEN)
+    for name, path in [("bias", "bias.h5"), ("chrombpnet", "chrombpnet.h5"),
+                       ("chrombpnet_nobias", "chrombpnet_nobias.h5")]:
+        preds_bed = pd.read_csv(prefix + "_{}_preds.bed".format(name), sep="\t", names=NARROWPEAK_SCHEMA)
+        pd.testing.assert_frame_equal(preds_bed, kept)
+        logits, logcounts = model_io.load_model(dataset / path).predict(seqs, verbose=0)
+        expected = softmax(logits, axis=1) * np.exp(logcounts)
+        with pyBigWig.open(prefix + "_{}.bw".format(name)) as bw:
+            assert bw.chroms() == dict(TWO_CHROMS)
+            for c, _ in TWO_CHROMS:
+                if c not in debug_chr:
+                    assert not bw.intervals(c)
+            assert sum(len(bw.intervals(c) or ()) for c in debug_chr) == len(kept) * OUTPUTLEN
+            for k, r in kept.iterrows():
+                mid = r.start + r.summit
+                got = np.array(bw.values(r.chr, mid - OUTPUTLEN // 2, mid + OUTPUTLEN // 2))
+                np.testing.assert_allclose(got, expected[k], rtol=1e-4)
+
+
+def test_contribs_bw_debug_chr(dataset, two_chrom, tmp_path, monkeypatch):
+    import hdf5plugin  # noqa: F401  (Blosc filter)
+    import chrombpnet.CHROMBPNET as cli
+    prefix = str(tmp_path / "contribs")
+    monkeypatch.setattr(sys, "argv", ["chrombpnet", "contribs_bw", "-m", str(dataset / "bias.h5"),
+                                      "-r", str(two_chrom / "peaks.bed"), "-g", str(two_chrom / "genome.fa"),
+                                      "-c", str(two_chrom / "chrom.sizes"), "-op", prefix, "-pc", "counts", "-t", "0",
+                                      "--shap-batch-seqs", "2", "-d", "chr2"])
+    cli.main()
+    kept = _kept_regions(two_chrom, ["chr2"])
+    interpreted = pd.read_csv(prefix + ".interpreted_regions.bed", sep="\t", names=NARROWPEAK_SCHEMA)
+    pd.testing.assert_frame_equal(interpreted, kept)
+    with h5py.File(prefix + ".counts_scores.h5", "r") as f:
+        scores = f["projected_shap"]["seq"][:].sum(1)
+    assert scores.shape == (len(kept), INPUTLEN)
+    with pyBigWig.open(prefix + ".counts_scores.bw") as bw:
+        assert not bw.intervals("chr1")
+        for k, r in kept.iterrows():
+            mid = r.start + r.summit
+            np.testing.assert_array_equal(np.array(bw.values("chr2", mid - INPUTLEN // 2, mid + INPUTLEN // 2),
+                                                   np.float32), scores[k].astype(np.float32))
+
+
+@pytest.mark.parametrize("debug_chr", [None, "chr2", ["chr2"], ("chr1", "chr2")])
+def test_write_bigwig_debug_chr(tmp_path, debug_chr):
+    """write_bigwig subsets to one chromosome name (importance_hdf5_to_bigwig -d) or a list of them (contribs_bw)."""
+    from chrombpnet.evaluation.make_bigwigs import bigwig_helper
+    gs = [("chr1", 1000), ("chr2", 1000)]
+    regions = [["chr2", 100, 110, 105], ["chr1", 200, 210, 205], ["chr2", 50, 60, 55]]
+    data = np.arange(30, dtype=float).reshape(3, 10)
+    bigwig_helper.write_bigwig(data, regions, gs, str(tmp_path / "x.bw"), debug_chr=debug_chr,
+                               outstats_file=str(tmp_path / "stats.txt"))
+    keep = {"chr1", "chr2"} if debug_chr is None else {debug_chr} if isinstance(debug_chr, str) else set(debug_chr)
+    with pyBigWig.open(str(tmp_path / "x.bw")) as bw:
+        for k, (c, s, e, _) in enumerate(regions):
+            if c in keep:
+                assert bw.values(c, s, e) == data[k].tolist()
+            else:
+                assert not bw.intervals(c)
+    kept = np.concatenate([data[k] for k, r in enumerate(regions) if r[0] in keep])
+    stats = dict(line.split("\t") for line in open(tmp_path / "stats.txt").read().splitlines())
+    assert (float(stats["Min"]), float(stats["Max"])) == (kept.min(), kept.max())

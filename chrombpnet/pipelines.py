@@ -13,31 +13,19 @@ def interpret_args(args_copy, args):
 	args_copy.batch_seqs = getattr(args, "shap_batch_seqs", None)
 	return args_copy
 
-def available_cpus():
-	slurm_cpus = os.environ.get("SLURM_CPUS_PER_TASK", "")
-	if slurm_cpus.isdigit() and int(slurm_cpus) > 0:
-		return int(slurm_cpus)
-	return os.cpu_count() or 1
-
-def run_modisco(args, scores_h5, modisco_h5, report_dir, meme_file, threads=None):
+def run_modisco(args, scores_h5, modisco_h5, report_dir, meme_file):
+	# threads=None: the modisco subprocess gets the user's NUMBA_NUM_THREADS if set, else the CPUs allocated to the
+	# job (chrombpnet.evaluation.modisco.run.default_threads)
 	from chrombpnet.evaluation.modisco.run import modisco_motifs, modisco_report
 	modisco_motifs(scores_h5, modisco_h5, max_seqlets=getattr(args, "modisco_max_seqlets", 50000),
-		window=getattr(args, "modisco_window", 500), threads=threads)
+		window=getattr(args, "modisco_window", 500), threads=None)
 	modisco_report(modisco_h5, report_dir, str(meme_file), tomtom_lite=getattr(args, "tomtom_lite", False))
 
 def run_modisco_heads(args, jobs, meme_file):
-	# jobs: (scores_h5, modisco_h5, report_dir) per head. One after the other (all CPUs each) unless there are
-	# enough CPUs to split them between concurrent modisco processes.
-	cpus = available_cpus()
-	if len(jobs) > 1 and cpus >= 8:
-		from concurrent.futures import ThreadPoolExecutor
-		with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
-			futures = [pool.submit(run_modisco, args, *job, meme_file, threads=cpus // len(jobs)) for job in jobs]
-			for future in futures:
-				future.result()
-	else:
-		for job in jobs:
-			run_modisco(args, *job, meme_file)
+	# jobs: (scores_h5, modisco_h5, report_dir) per head, run one after the other like chrombpnet 1.x (each modisco
+	# run uses all the CPUs of the job; running them at the same time would double the peak memory)
+	for job in jobs:
+		run_modisco(args, *job, meme_file)
 
 def chrombpnet_train_pipeline(args):
 

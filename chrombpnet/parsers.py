@@ -92,7 +92,7 @@ def read_parser(argv=None):
 
         def interpret_args(optional):
         	optional.add_argument("--shap-seed", type=int, default=1234, help="Seed for the dinucleotide-shuffled DeepSHAP references")
-        	optional.add_argument("--shap-batch-seqs", type=int, default=None, help="Sequences per DeepSHAP batch (each with its 20 references). Chosen from the available memory if not set")
+        	optional.add_argument("--shap-batch-seqs", type=int, default=None, help="Sequences per DeepSHAP batch (each with its 20 references). default: chosen automatically from the model size and available GPU memory; halved on out-of-memory")
         	optional.add_argument("--shap-precision", type=str, default="highest", choices=["highest", "default"], help="Matmul/convolution precision for DeepSHAP: highest (full float32) or default (TF32 on GPUs that have it)")
         	return optional
 

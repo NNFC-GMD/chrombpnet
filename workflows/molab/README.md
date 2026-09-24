@@ -80,8 +80,9 @@ Override any `env.sh` default per job with `--export`, for example
 Several jobs can use the card at the same time. molab does not enforce `--mem`/`--gres`, and the kernel's OOM
 killer picks the largest process, which is usually someone's long training job. To avoid that:
 
-* `XLA_PYTHON_CLIENT_PREALLOCATE=false` (in `env.sh`, and chrombpnet's own default): JAX allocates on demand
-  instead of taking 75% of the card at start-up.
+* `XLA_PYTHON_CLIENT_PREALLOCATE=false` (in `env.sh`, the pixi environments and chrombpnet's own default): JAX
+  allocates on demand instead of taking 75% of the card at start-up. It keeps what it allocated until the job
+  ends, and DeepSHAP picks its batch size from the free GPU memory, so the cap below matters.
 * `XLA_PYTHON_CLIENT_MEM_FRACTION` (default 0.25 here, about 24 GB) caps the pool even without preallocation.
   It is a fraction of the card's **total** memory, not of what is free. Check `nvidia-smi` before raising it.
 * While other people's jobs are running, use `-c 1`-`2`, keep host memory under about 6 GB, and put heavy work
@@ -98,7 +99,7 @@ killer picks the largest process, which is usually someone's long training job. 
 | `CHROMBPNET_PIXI_ENV` | `cuda13-dev` | env `setup_box.sh` installs (`cuda13`, `cuda13-dev`, `cuda12`) |
 | `CHROMBPNET_THREADS` | `$SLURM_CPUS_PER_TASK`, else 2 | OMP/OpenBLAS/MKL/numexpr/numba threads |
 | `KERAS_BACKEND` | `jax` | always |
-| `XLA_PYTHON_CLIENT_PREALLOCATE` | `false` | |
+| `XLA_PYTHON_CLIENT_PREALLOCATE` | `false` | `pixi run` sets `false` as well, over `--export` |
 | `XLA_PYTHON_CLIENT_MEM_FRACTION` | `0.25` | |
 | `CUDA_VISIBLE_DEVICES` | `0` | |
 | `PIXI_CACHE_DIR`, `UV_CACHE_DIR` | `.scratch/cache/{rattler,uv}` | same filesystem as `.pixi/`, so installs hardlink |
