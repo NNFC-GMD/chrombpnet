@@ -4,6 +4,7 @@ from chrombpnet.data import DefaultDataFile, get_default_data_path
 from chrombpnet.data import print_meme_motif_file
 import chrombpnet.pipelines as pipelines
 import copy
+import shutil
 import subprocess
 import pandas as pd
 import logging
@@ -11,14 +12,53 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 
 MODEL_COMMANDS = ["pipeline", "train", "qc", "bias", "pred_bw", "contribs_bw", "footprints"]
 
+def runs_modisco(args):
+	# the commands that end with modisco motifs + modisco report (train / bias train stop after training)
+	if args.cmd == "bias":
+		return args.cmd_bias in ("pipeline", "qc")
+	return args.cmd in ("pipeline", "qc")
+
+def check_tomtom(args):
+	# modisco report needs MEME's tomtom unless --tomtom-lite; found the way evaluation/modisco/run.py finds it
+	if not runs_modisco(args) or getattr(args, "tomtom_lite", False):
+		return
+	from chrombpnet.evaluation.modisco.run import modisco_env
+	if shutil.which("tomtom", path=modisco_env()["PATH"]) is None:
+		raise RuntimeError(
+			"MEME's `tomtom` was not found on PATH; it is needed to match MoDISco motifs against {}. "
+			"Install MEME (bioconda `meme`, included in chrombpnet's linux pixi environments) or use "
+			"TOMTOM-lite instead (--tomtom-lite; reports p-values instead of q-values).".format(
+				get_default_data_path(DefaultDataFile.motifs_meme)))
+
 def check_model_runtime(args):
 	# fail before any output directory is created
+	check_tomtom(args)
 	device = getattr(args, "device", None)
-	if device is not None:
+	if device == "cpu":
+		# before jax is imported, so that JAX never creates a GPU client (a CUDA context on every visible GPU)
+		os.environ["JAX_PLATFORMS"] = "cpu"
+	if device in ("gpu", "cpu"):
+		# 'auto' is left to the first model load (train.main logs the backend), so that the hours of CPU-only
+		# preprocessing do not hold a context on every visible GPU
 		from chrombpnet.training.runtime import assert_gpu_if_requested
 		assert_gpu_if_requested(device)
 	from chrombpnet.training.utils.model_io import require_jax_backend
 	require_jax_backend()
+
+def run_to_file(argv, output):
+	# argv list, no shell: paths with spaces or shell metacharacters are passed to the command unchanged
+	with open(output, "w") as out:
+		subprocess.run(argv, stdout=out, check=True)
+
+def bedtools_sort_merge(input_bed, output):
+	# bedtools sort -i input_bed | bedtools merge -i stdin > output, failing if either command fails (like pipefail;
+	# a failed sort would otherwise leave merge an empty stdin and an empty exclude.bed)
+	with open(output, "w") as out, subprocess.Popen(["bedtools", "sort", "-i", input_bed], stdout=subprocess.PIPE) as sort:
+		merge = subprocess.run(["bedtools", "merge", "-i", "stdin"], stdin=sort.stdout, stdout=out)
+	# leaving the with block closed sort's stdout and waited for it
+	for proc in (merge, sort):
+		if proc.returncode != 0:
+			raise subprocess.CalledProcessError(proc.returncode, proc.args)
 
 
 # invoke pipeline modules based on command
@@ -117,31 +157,22 @@ def main():
 			# prepare candidate negatives
 	
 			exclude_bed = pd.read_csv(args.peaks, sep="\t", header=None)
-			subprocess.run("bedtools slop -i {peaks} -g {chrom_sizes} -b {flank_size} > {output}".format(peaks=args.peaks,
-												chrom_sizes=args.chrom_sizes,
-												flank_size=args.inputlen//2,
-												output=args.output_prefix+"_auxiliary/peaks_slop.bed"), shell=True, check=True)
+			run_to_file(["bedtools", "slop", "-i", args.peaks, "-g", args.chrom_sizes, "-b", str(args.inputlen//2)],
+					args.output_prefix+"_auxiliary/peaks_slop.bed")
 			exclude_bed = pd.read_csv(args.output_prefix+"_auxiliary/peaks_slop.bed", sep="\t", header=None, usecols=[0,1,2])
 	
 			if args.blacklist_regions:
-				subprocess.run("bedtools slop -i {blacklist} -g {chrom_sizes} -b {flank_size} > {output}".format(blacklist=args.blacklist_regions,
-												chrom_sizes=args.chrom_sizes,
-												flank_size=args.inputlen//2,
-												output=args.output_prefix+"_auxiliary/blacklist_slop.bed"), shell=True, check=True)
+				run_to_file(["bedtools", "slop", "-i", args.blacklist_regions, "-g", args.chrom_sizes, "-b", str(args.inputlen//2)],
+						args.output_prefix+"_auxiliary/blacklist_slop.bed")
 										
 				exclude_bed = pd.concat([exclude_bed,pd.read_csv(args.output_prefix+"_auxiliary/blacklist_slop.bed",sep="\t",header=None, usecols=[0,1,2])])
 
 			exclude_bed.to_csv(args.output_prefix+"_auxiliary/exclude_unmerged.bed", sep="\t", header=False, index=False)
-			subprocess.run("bedtools sort -i {inputb} | bedtools merge -i stdin > {output}".format(inputb=args.output_prefix+"_auxiliary/exclude_unmerged.bed",
-																					output=args.output_prefix+"_auxiliary/exclude.bed"), shell=True, check=True)			
-	
-	
+			bedtools_sort_merge(args.output_prefix+"_auxiliary/exclude_unmerged.bed", args.output_prefix+"_auxiliary/exclude.bed")
 
-			bedtools_command = "bedtools intersect -v -a {genomewide_gc} -b {exclude_bed}  > {candidate_bed}".format(
-															genomewide_gc=args.output_prefix+"_auxiliary/genomewide_gc.bed",
-															exclude_bed=args.output_prefix+"_auxiliary/exclude.bed",
-															candidate_bed=args.output_prefix+"_auxiliary/candidates.bed")
-			subprocess.run(bedtools_command, shell=True, check=True)
+			run_to_file(["bedtools", "intersect", "-v", "-a", args.output_prefix+"_auxiliary/genomewide_gc.bed",
+					"-b", args.output_prefix+"_auxiliary/exclude.bed"],
+					args.output_prefix+"_auxiliary/candidates.bed")
 													
 			# get final negatives
 			import chrombpnet.helpers.make_gc_matched_negatives.get_gc_matched_negatives as get_gc_matched_negatives

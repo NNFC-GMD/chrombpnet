@@ -95,6 +95,9 @@ def test_help(argv, capsys):
         for flag in ["--optimizer", "--ema", "--precision", "--device", "--interpret-subsample", "--shap-seed",
                      "--modisco-max-seqlets", "--tomtom-lite"]:
             assert flag in out
+        shap_batch_help = ("default: chosen automatically from the model size and available GPU memory; halved on "
+                           "out-of-memory")
+        assert "".join(shap_batch_help.split()) in "".join(out.split())  # argparse wraps (also at hyphens)
 
 
 def test_help_subprocess_imports_no_deep_learning_framework():
@@ -229,8 +232,7 @@ def _qc_namespace(tmp_path, n_peaks, **extra):
                               file_prefix="fp", batch_size=64, html_prefix="./", cmd_bias="qc", cmd="qc", **extra)
 
 
-def test_bias_qc_wiring_defaults(tmp_path, fake_steps, monkeypatch):
-    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "4")
+def test_bias_qc_wiring_defaults(tmp_path, fake_steps):
     args = _qc_namespace(tmp_path, n_peaks=12)
     pipelines.bias_model_qc(args)
     o = args.output_dir
@@ -257,18 +259,20 @@ def test_bias_qc_wiring_defaults(tmp_path, fake_steps, monkeypatch):
     assert len(pd.read_csv(os.path.join(o, "auxiliary/fp_30K_subsample_peaks.bed"), sep="\t", header=None)) == 12
 
 
-def test_bias_qc_wiring_new_flags_and_concurrent_modisco(tmp_path, fake_steps, monkeypatch):
-    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "16")
+def test_bias_qc_wiring_new_flags(tmp_path, fake_steps, monkeypatch):
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "16")  # many CPUs: the two heads still run one after the other
     args = _qc_namespace(tmp_path, n_peaks=12, interpret_subsample=5, shap_seed=3, shap_precision="default",
                          shap_batch_seqs=2, seed=99, precision="bf16", modisco_max_seqlets=1000, modisco_window=300,
                          tomtom_lite=True)
     pipelines.bias_model_qc(args)
     interpret = [c for c in fake_steps if c[0] == "interpret"]
     assert [c[5:] for c in interpret] == [(3, "default", 2)]
-    motifs = sorted(c for c in fake_steps if c[0] == "motifs")
-    assert [(c[1].rsplit("/", 1)[1], c[3:]) for c in motifs] == [("fp_bias.counts_scores.h5", (1000, 300, 8)),
-                                                                  ("fp_bias.profile_scores.h5", (1000, 300, 8))]
-    assert [c[4] for c in fake_steps if c[0] == "report"] == [True, True]
+    modisco = [c for c in fake_steps if c[0] in ("motifs", "report")]
+    assert [(c[0], c[1].rsplit("/", 1)[1]) for c in modisco] == [
+        ("motifs", "fp_bias.profile_scores.h5"), ("report", "fp_modisco_results_profile_scores.h5"),
+        ("motifs", "fp_bias.counts_scores.h5"), ("report", "fp_modisco_results_counts_scores.h5")]
+    assert [c[3:] for c in modisco if c[0] == "motifs"] == [(1000, 300, None)] * 2
+    assert [c[4] for c in modisco if c[0] == "report"] == [True, True]
     sub_peaks = pd.read_csv(os.path.join(args.output_dir, "auxiliary/fp_30K_subsample_peaks.bed"), sep="\t", header=None)
     peaks = pd.read_csv(os.path.join(args.output_dir, "auxiliary/fp_filtered.bias_peaks.bed"), sep="\t", header=None)
     pd.testing.assert_frame_equal(sub_peaks, peaks.sample(5, random_state=1234).reset_index(drop=True))
@@ -276,8 +280,7 @@ def test_bias_qc_wiring_new_flags_and_concurrent_modisco(tmp_path, fake_steps, m
     assert [c[0] for c in fake_steps][-3:] == ["pdf", "pdf", "make_html_bias"]
 
 
-def test_chrombpnet_qc_wiring(tmp_path, fake_steps, monkeypatch):
-    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "16")
+def test_chrombpnet_qc_wiring(tmp_path, fake_steps):
     args = _qc_namespace(tmp_path, n_peaks=3)
     pipelines.chrombpnet_qc(args)
     o = args.output_dir
@@ -297,8 +300,6 @@ def test_chrombpnet_qc_wiring(tmp_path, fake_steps, monkeypatch):
 
 
 def test_modisco_failure_propagates(tmp_path, fake_steps, monkeypatch):
-    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "8")
-
     def failing_motifs(scores_h5, output_h5, **kwargs):
         raise subprocess.CalledProcessError(1, ["modisco", "motifs"])
 
@@ -306,6 +307,114 @@ def test_modisco_failure_propagates(tmp_path, fake_steps, monkeypatch):
     with pytest.raises(subprocess.CalledProcessError):
         pipelines.bias_model_qc(_qc_namespace(tmp_path, n_peaks=2))
     assert "pdf" not in [c[0] for c in fake_steps]
+
+
+@pytest.mark.parametrize("numba_threads", [None, "2"])
+def test_modisco_heads_run_one_after_the_other_with_the_job_threads(tmp_path, monkeypatch, numba_threads):
+    """chrombpnet 1.x ran the profile and counts heads one after the other; each modisco process gets the user's
+    NUMBA_NUM_THREADS if set, else the CPUs allocated to the job (run.default_threads), never the host CPU count."""
+    import threading
+    import chrombpnet.evaluation.modisco.run as run
+    monkeypatch.setattr(os, "cpu_count", lambda: 64)  # a big host ...
+    monkeypatch.setenv("SLURM_CPUS_PER_TASK", "4")  # ... and a 4-CPU job
+    if numba_threads is None:
+        monkeypatch.delenv("NUMBA_NUM_THREADS", raising=False)
+    else:
+        monkeypatch.setenv("NUMBA_NUM_THREADS", numba_threads)
+    monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path / "numba"))
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        env = kwargs["env"]
+        calls.append((argv[1], os.path.basename(argv[argv.index("-i") + 1]), env["NUMBA_NUM_THREADS"],
+                      env["OMP_NUM_THREADS"], threading.current_thread() is threading.main_thread()))
+
+    monkeypatch.setattr(run.subprocess, "run", fake_run)
+    jobs = [(str(tmp_path / "{}_scores.h5".format(head)), str(tmp_path / "modisco_{}.h5".format(head)),
+             str(tmp_path / "report_{}".format(head))) for head in ("profile", "counts")]
+    pipelines.run_modisco_heads(argparse.Namespace(tomtom_lite=True), jobs, "motifs.meme")
+    threads = numba_threads or "4"
+    assert calls == [("motifs", "profile_scores.h5", threads, threads, True),
+                     ("report-simple", "modisco_profile.h5", threads, threads, True),
+                     ("motifs", "counts_scores.h5", threads, threads, True),
+                     ("report-simple", "modisco_counts.h5", threads, threads, True)]
+    assert not hasattr(pipelines, "available_cpus")
+
+
+# ---------------------------------------------------------------- CHROMBPNET.main preflight checks
+
+def _argv(command, out):
+    argv = list(MINIMAL_ARGV[command])
+    argv[argv.index("-o") + 1] = str(out)
+    return ["chrombpnet"] + argv
+
+
+@pytest.fixture
+def no_tomtom(tmp_path, monkeypatch):
+    """No `tomtom` next to the interpreter or on PATH (the linux pixi environments ship one)."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    monkeypatch.setattr(sys, "executable", str(bindir / "python"))
+    monkeypatch.setenv("PATH", str(bindir))
+    monkeypatch.setenv("NUMBA_CACHE_DIR", str(tmp_path / "numba"))
+    return bindir
+
+
+@pytest.mark.parametrize("command", ["pipeline", "qc", "bias pipeline", "bias qc"])
+def test_missing_tomtom_fails_before_any_output(tmp_path, monkeypatch, no_tomtom, command):
+    import chrombpnet.CHROMBPNET as cli
+    out = tmp_path / "out"
+    monkeypatch.setattr(sys, "argv", _argv(command, out))
+    with pytest.raises(RuntimeError, match="MEME's `tomtom` was not found on PATH.*--tomtom-lite"):
+        cli.main()
+    assert not out.exists()
+
+
+@pytest.mark.parametrize("command,extra", [("pipeline", ["--tomtom-lite"]), ("bias qc", ["--tomtom-lite"]),
+                                           ("train", []), ("bias train", [])])
+def test_tomtom_not_needed(no_tomtom, command, extra):
+    import chrombpnet.CHROMBPNET as cli
+    cli.check_model_runtime(parsers.read_parser(MINIMAL_ARGV[command] + extra))
+
+
+def test_tomtom_next_to_the_interpreter_is_found(no_tomtom):
+    import chrombpnet.CHROMBPNET as cli
+    tomtom = no_tomtom / "tomtom"
+    tomtom.write_text("#!/bin/sh\n")
+    tomtom.chmod(0o755)
+    cli.check_model_runtime(parsers.read_parser(MINIMAL_ARGV["bias pipeline"]))
+
+
+def test_device_check_only_for_gpu_and_cpu(monkeypatch):
+    import chrombpnet.CHROMBPNET as cli
+    import chrombpnet.training.runtime as runtime
+    requested = []
+    monkeypatch.setattr(runtime, "assert_gpu_if_requested", requested.append)
+    monkeypatch.setenv("JAX_PLATFORMS", "")  # restored after the test
+    for device in ("auto", "gpu", "cpu"):
+        cli.check_model_runtime(parsers.read_parser(MINIMAL_ARGV["train"] + ["--device", device]))
+    cli.check_model_runtime(parsers.read_parser(MINIMAL_ARGV["pred_bw"]))  # no --device
+    assert requested == ["gpu", "cpu"]
+    assert os.environ["JAX_PLATFORMS"] == "cpu"
+
+
+@pytest.mark.parametrize("device", ["auto", "cpu"])
+def test_device_check_initialises_no_other_jax_backend(device):
+    """--device auto leaves JAX alone until the first model load (no CUDA context on every visible GPU during
+    preprocessing); --device cpu restricts JAX to the CPU platform before any backend is created."""
+    code = ("import argparse\n"
+            "import chrombpnet.CHROMBPNET as cli\n"
+            "cli.check_model_runtime(argparse.Namespace(cmd='train', device={!r}))\n"
+            "import jax\n"
+            "from jax._src import xla_bridge\n"
+            "if {!r} == 'auto':\n"
+            "    assert not xla_bridge.backends_are_initialized()\n"
+            "else:\n"
+            "    assert jax.config.jax_platforms == 'cpu', jax.config.jax_platforms\n"
+            "    assert list(xla_bridge.backends()) == ['cpu'], list(xla_bridge.backends())\n").format(device, device)
+    env = {k: v for k, v in os.environ.items() if k != "JAX_PLATFORMS"}
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stdout + r.stderr
 
 
 # ---------------------------------------------------------------- prep commands through CHROMBPNET.main
@@ -329,30 +438,94 @@ def _write_fasta(path, chroms, rng):
             f.writelines(seq[i:i + 60] + "\n" for i in range(0, length, 60))
 
 
+def _prep_nonpeaks_inputs(d, rng):
+    d.mkdir(parents=True)
+    chroms = [("chr1", 40000), ("chr2", 40000), ("chr3", 40000)]
+    _write_fasta(d / "genome.fa", chroms, rng)
+    (d / "chrom.sizes").write_text("".join("{}\t{}\n".format(c, n) for c, n in chroms))
+    json.dump({"train": ["chr1"], "valid": ["chr2"], "test": ["chr3"]}, open(d / "fold.json", "w"))
+    rows = [[c, m - 250, m + 250, ".", ".", ".", ".", ".", ".", 250] for c, _ in chroms for m in (10000, 25000)]
+    pd.DataFrame(rows).to_csv(d / "peaks.bed", sep="\t", header=False, index=False)
+    (d / "blacklist.bed").write_text("chr1\t30000\t31000\nchr2\t5000\t5500\n")
+    return rows
+
+
+def _run_prep_nonpeaks(monkeypatch, d, prefix, blacklist=False):
+    import chrombpnet.CHROMBPNET as cli
+    argv = ["chrombpnet", "prep", "nonpeaks", "-g", str(d / "genome.fa"), "-o", prefix, "-p", str(d / "peaks.bed"),
+            "-c", str(d / "chrom.sizes"), "-fl", str(d / "fold.json"), "-il", "1000", "-st", "500"]
+    if blacklist:
+        argv += ["-br", str(d / "blacklist.bed")]
+    monkeypatch.setattr(sys, "argv", argv)
+    cli.main()
+    return pd.read_csv(prefix + "_negatives.bed", sep="\t", header=None)
+
+
 @pytest.mark.needs_cli
 def test_prep_nonpeaks(tmp_path, monkeypatch):
     if shutil.which("bedtools") is None:
         pytest.skip("bedtools not on PATH (run inside the pixi environment)")
-    import chrombpnet.CHROMBPNET as cli
-    rng = np.random.RandomState(0)
-    chroms = [("chr1", 40000), ("chr2", 40000), ("chr3", 40000)]
-    _write_fasta(tmp_path / "genome.fa", chroms, rng)
-    (tmp_path / "chrom.sizes").write_text("".join("{}\t{}\n".format(c, n) for c, n in chroms))
-    json.dump({"train": ["chr1"], "valid": ["chr2"], "test": ["chr3"]}, open(tmp_path / "fold.json", "w"))
-    rows = [[c, m - 250, m + 250, ".", ".", ".", ".", ".", ".", 250] for c, _ in chroms for m in (10000, 25000)]
-    pd.DataFrame(rows).to_csv(tmp_path / "peaks.bed", sep="\t", header=False, index=False)
+    rows = _prep_nonpeaks_inputs(tmp_path / "in", np.random.RandomState(0))
     prefix = str(tmp_path / "out" / "fold_0")
     (tmp_path / "out").mkdir()
-    monkeypatch.setattr(sys, "argv", ["chrombpnet", "prep", "nonpeaks", "-g", str(tmp_path / "genome.fa"), "-o", prefix,
-                                      "-p", str(tmp_path / "peaks.bed"), "-c", str(tmp_path / "chrom.sizes"),
-                                      "-fl", str(tmp_path / "fold.json"), "-il", "1000", "-st", "500"])
-    cli.main()
-    negatives = pd.read_csv(prefix + "_negatives.bed", sep="\t", header=None)
+    negatives = _run_prep_nonpeaks(monkeypatch, tmp_path / "in", prefix)
     assert negatives.shape == (2 * 2 + 2 * 2 + 2 * 1, 10)  # 2 negatives per train/valid peak, 1 per test peak
     assert (negatives[9] == 500).all() and (negatives[2] - negatives[1] == 1000).all()
     for _, neg in negatives.iterrows():
         for c, s, e in [(r[0], r[1], r[2]) for r in rows]:
             assert not (neg[0] == c and neg[1] < e + 500 and neg[2] > s - 500)  # outside the slopped peaks
+
+
+@pytest.mark.needs_cli
+def test_prep_nonpeaks_paths_with_spaces(tmp_path, monkeypatch):
+    """No shell: inputs and an output prefix with spaces (or shell syntax) give the same files as plain paths; the
+    shell used to redirect `> /data/my run/...` to `/data/my`."""
+    if shutil.which("bedtools") is None:
+        pytest.skip("bedtools not on PATH (run inside the pixi environment)")
+    rows = _prep_nonpeaks_inputs(tmp_path / "in", np.random.RandomState(0))
+    _prep_nonpeaks_inputs(tmp_path / "in put $(x)", np.random.RandomState(0))
+    (tmp_path / "out").mkdir()
+    (tmp_path / "my run").mkdir()
+    plain = str(tmp_path / "out" / "fold_0")
+    spaced = str(tmp_path / "my run" / "fold 0")
+    _run_prep_nonpeaks(monkeypatch, tmp_path / "in", plain, blacklist=True)
+    negatives = _run_prep_nonpeaks(monkeypatch, tmp_path / "in put $(x)", spaced, blacklist=True)
+    assert not (tmp_path / "my").exists()
+    aux = ["blacklist_slop.bed", "candidates.bed", "exclude.bed", "exclude_unmerged.bed", "foreground.gc.bed",
+           "genomewide_gc.bed", "negatives.bed", "peaks_slop.bed"]
+    assert (sorted(os.listdir(plain + "_auxiliary")) == sorted(os.listdir(spaced + "_auxiliary"))
+            == sorted(aux + ["negatives_compared_with_foreground.png"]))
+    for name in aux:
+        with open(os.path.join(plain + "_auxiliary", name)) as a, open(os.path.join(spaced + "_auxiliary", name)) as b:
+            assert a.read() == b.read(), name
+    with open(plain + "_negatives.bed") as a, open(spaced + "_negatives.bed") as b:
+        assert a.read() == b.read()
+    exclude = pd.read_csv(spaced + "_auxiliary/exclude.bed", sep="\t", header=None)
+    assert len(exclude) == len(rows) + 2  # the slopped peaks and blacklist regions, none overlapping
+    for _, neg in negatives.iterrows():
+        assert not (neg[0] == "chr1" and neg[1] < 31500 and neg[2] > 29500)  # outside the slopped blacklist
+
+
+@pytest.mark.needs_cli
+def test_bedtools_sort_failure_is_not_hidden_by_merge(tmp_path, monkeypatch):
+    """`bedtools sort | bedtools merge` without pipefail: a failed sort left merge an empty stdin (exit 0)."""
+    import chrombpnet.CHROMBPNET as cli
+    bedtools = shutil.which("bedtools")
+    if bedtools is None:
+        pytest.skip("bedtools not on PATH (run inside the pixi environment)")
+    (tmp_path / "in.bed").write_text("chr1\t50\t80\nchr1\t10\t60\nchr2\t5\t9\n")
+    cli.bedtools_sort_merge(str(tmp_path / "in.bed"), str(tmp_path / "merged.bed"))
+    assert (tmp_path / "merged.bed").read_text() == "chr1\t10\t80\nchr2\t5\t9\n"
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake = bindir / "bedtools"
+    fake.write_text('#!/bin/sh\nif [ "$1" = sort ]; then echo "sort: no space left" >&2; exit 1; fi\n'
+                    'exec "{}" "$@"\n'.format(bedtools))
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ["PATH"])
+    with pytest.raises(subprocess.CalledProcessError) as exc:
+        cli.bedtools_sort_merge(str(tmp_path / "in.bed"), str(tmp_path / "merged.bed"))
+    assert exc.value.cmd[:2] == ["bedtools", "sort"] and exc.value.returncode == 1
 
 
 def test_prep_nonpeaks_fails_loudly_without_bedtools(tmp_path, monkeypatch):
@@ -368,5 +541,5 @@ def test_prep_nonpeaks_fails_loudly_without_bedtools(tmp_path, monkeypatch):
                                       "-o", str(tmp_path / "x"), "-p", str(tmp_path / "peaks.bed"),
                                       "-c", str(tmp_path / "chrom.sizes"), "-fl", str(tmp_path / "fold.json"),
                                       "-il", "1000"])
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(FileNotFoundError, match="bedtools"):
         cli.main()
