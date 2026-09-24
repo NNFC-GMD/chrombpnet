@@ -79,6 +79,10 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
 - TF-MoDISco for the profile and counts heads of `bias pipeline` / `bias qc` still runs one head after the
   other, as in 1.x. Its numba threads follow `NUMBA_NUM_THREADS` if set, otherwise the job's CPUs
   (`SLURM_CPUS_PER_TASK`, else the CPU affinity mask).
+- `dna_to_one_hot` looks each base up in a 256-row table, in blocks, instead of one `np.unique` pass over the
+  whole input. The array is the same as in 1.x (tested against the 1.x function); peak memory drops from about 7x
+  the int8 result to about 1.1x (1.14 GiB to 0.18 GiB for 20,000 x 2114 bp), which matters when training and
+  `contribs_bw` encode every region at once. It also accepts an empty list.
 - Removed: the legacy modisco-0.5 scripts (`evaluation/modisco/{run_modisco,fetch_tomtom,visualize_motif_matches}.py`,
   `modisco.sh`) and `evaluation/invivo_footprints/`.
 
