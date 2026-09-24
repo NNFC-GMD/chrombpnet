@@ -148,7 +148,7 @@ chrombpnet pipeline \
 
 #### Input Format
 
-- `-ibam` or `-ifrag` or `-itag`: input file path with filtered reads in one of bam, fragment or tagalign formats. Example files for supported types - [bam](https://storage.googleapis.com/chrombpnet_data/input_files/ENCSR868FGK_merged.bam), [fragment](https://storage.googleapis.com/chrombpnet_data/input_files/example.fragments.tsv), [tagalign](https://storage.googleapis.com/chrombpnet_data/input_files/example.tagAlign) 
+- `-ibam` or `-ifrag` or `-itag`: input file path with filtered reads in one of bam, fragment or tagalign formats. Alternatively `-bw`: a bigWig of the signal that is already shifted and unstranded (as `reads_to_bigwig` writes it), which skips the conversion from reads. Example files for supported types - [bam](https://storage.googleapis.com/chrombpnet_data/input_files/ENCSR868FGK_merged.bam), [fragment](https://storage.googleapis.com/chrombpnet_data/input_files/example.fragments.tsv), [tagalign](https://storage.googleapis.com/chrombpnet_data/input_files/example.tagAlign) 
 - `-d`: assay type. The following types are supported - "ATAC" or "DNASE"
 - `-g`: reference genome fasta file. Example file human reference - [hg38.fa](https://storage.googleapis.com/chrombpnet_data/input_files/hg38.genome.fa)
 - `-c`: chromosome and size tab separated file. Example file in human reference - [hg38.chrom.sizes](https://storage.googleapis.com/chrombpnet_data/input_files/hg38.chrom.sizes)
@@ -225,7 +225,7 @@ chrombpnet bias pipeline \
 
 #### Input Format
 
-- `-ibam` or `-ifrag` or `-itag`: input file path with filtered reads in one of bam, fragment or tagalign formats. Example files for supported types - [bam](https://storage.googleapis.com/chrombpnet_data/input_files/ENCSR868FGK_merged.bam), [fragment](https://storage.googleapis.com/chrombpnet_data/input_files/example.fragments.tsv), [tagalign](https://storage.googleapis.com/chrombpnet_data/input_files/example.tagAlign) 
+- `-ibam` or `-ifrag` or `-itag`: input file path with filtered reads in one of bam, fragment or tagalign formats. Alternatively `-bw`: a bigWig of the signal that is already shifted and unstranded (as `reads_to_bigwig` writes it), which skips the conversion from reads. Example files for supported types - [bam](https://storage.googleapis.com/chrombpnet_data/input_files/ENCSR868FGK_merged.bam), [fragment](https://storage.googleapis.com/chrombpnet_data/input_files/example.fragments.tsv), [tagalign](https://storage.googleapis.com/chrombpnet_data/input_files/example.tagAlign) 
 - `-d`: assay type.  Following types are supported - "ATAC" or "DNASE"
 - `-g`: reference genome fasta file. Example file human reference - [hg38.fa](https://storage.googleapis.com/chrombpnet_data/input_files/hg38.genome.fa)
 - `-c`: chromosome and size tab separated file. Example file in human reference - [hg38.chrom.sizes](https://storage.googleapis.com/chrombpnet_data/input_files/hg38.chrom.sizes)

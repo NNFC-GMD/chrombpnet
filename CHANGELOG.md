@@ -98,6 +98,10 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
   `chrombpnet/helpers/postprocessing/README.md`). `model_io.load_model` reads both and maps them to `LogSumExp`.
 
 ### New optional flags (the defaults keep the 1.x behaviour)
+- Input: `-ibw/-bw/--bigwig` on `pipeline`, `train`, `bias pipeline` and `bias train`, in place of
+  `-ibam/-ifrag/-itag`: a bigWig that is already shifted and unstranded, as `reads_to_bigwig` writes it. It is
+  used where it is (not copied into `auxiliary/`; its path is in `logs/*.args.json`), and the reads-to-bigWig
+  conversion with its shift estimation is skipped. The bigWig shift QC (`evaluation/bw_shift_qc`) still runs.
 - Training: `--optimizer {adam,muon}`, `--muon-lr`, `--ema`, `--lr-schedule {constant,cosine}`,
   `--precision {default,highest,bf16}`, `--device {auto,gpu,cpu}`.
 - Interpretation: `--interpret-subsample` (default 30000), `--shap-seed` (default 1234), `--shap-batch-seqs`,

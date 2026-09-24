@@ -27,6 +27,22 @@ def run_modisco_heads(args, jobs, meme_file):
 	for job in jobs:
 		run_modisco(args, *job, meme_file)
 
+def convert_reads(args, fpx):
+	# -ibam/-ifrag/-itag: shift the reads and write auxiliary/<fpx>data_unstranded.bw. -bw: nothing to convert.
+	# Decided on the reads, not on args.bigwig, which the conversion itself sets: a Namespace reused for another run,
+	# or built in Python with a leftover bigwig, must still convert its own reads
+	reads = [getattr(args, name, None) for name in ("input_bam_file", "input_fragment_file", "input_tagalign_file")]
+	if not any(reads):
+		if getattr(args, "bigwig", None) is None:
+			raise ValueError("No input: give reads (-ibam/-ifrag/-itag) or a bigwig (-bw)")
+		return
+	import chrombpnet.helpers.preprocessing.reads_to_bigwig as reads_to_bigwig
+	args.output_prefix = os.path.join(args.output_dir,"auxiliary/{}data".format(fpx))
+	args.plus_shift = None
+	args.minus_shift = None
+	reads_to_bigwig.main(args)
+	args.bigwig = os.path.join(args.output_dir,"auxiliary/{}data_unstranded.bw".format(fpx))
+
 def chrombpnet_train_pipeline(args):
 
 	if args.file_prefix:
@@ -34,16 +50,11 @@ def chrombpnet_train_pipeline(args):
 	else:
 		fpx = ""
 		
-	# Shift bam and convert to bigwig
-	import chrombpnet.helpers.preprocessing.reads_to_bigwig as reads_to_bigwig	
-	args.output_prefix = os.path.join(args.output_dir,"auxiliary/{}data".format(fpx))
-	args.plus_shift = None
-	args.minus_shift = None
-	reads_to_bigwig.main(args)
+	# Shift bam and convert to bigwig, unless a bigwig was given (-bw), which is used in place
+	convert_reads(args, fpx)
 	
 	# QC bigwig
 	import chrombpnet.helpers.preprocessing.analysis.build_pwm_from_bigwig as build_pwm_from_bigwig	
-	args.bigwig = os.path.join(args.output_dir,"auxiliary/{}data_unstranded.bw".format(fpx))
 	args.output_prefix = os.path.join(args.output_dir,"evaluation/{}bw_shift_qc".format(fpx))
 	folds = json.load(open(args.chr_fold_path))
 	assert(len(folds["valid"]) > 0) # validation list of chromosomes is empty
@@ -283,16 +294,11 @@ def train_bias_pipeline(args):
 	else:
 		fpx = ""
 		
-	# Shift bam and convert to bigwig
-	import chrombpnet.helpers.preprocessing.reads_to_bigwig as reads_to_bigwig	
-	args.output_prefix = os.path.join(args.output_dir,"auxiliary/{}data".format(fpx))
-	args.plus_shift = None
-	args.minus_shift = None
-	reads_to_bigwig.main(args)
+	# Shift bam and convert to bigwig, unless a bigwig was given (-bw), which is used in place
+	convert_reads(args, fpx)
 	
 	# QC bigwig
 	import chrombpnet.helpers.preprocessing.analysis.build_pwm_from_bigwig as build_pwm_from_bigwig	
-	args.bigwig = os.path.join(args.output_dir,"auxiliary/{}data_unstranded.bw".format(fpx))
 	args.output_prefix = os.path.join(args.output_dir,"evaluation/{}bw_shift_qc".format(fpx))
 	folds = json.load(open(args.chr_fold_path))
 	assert(len(folds["valid"]) > 0) # validation list of chromosomes is empty

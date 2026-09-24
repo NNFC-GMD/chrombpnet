@@ -30,8 +30,22 @@ def check_tomtom(args):
 			"TOMTOM-lite instead (--tomtom-lite; reports p-values instead of q-values).".format(
 				get_default_data_path(DefaultDataFile.motifs_meme)))
 
+def trains_a_model(args):
+	# the commands that take -ibam/-ifrag/-itag/-bw as input
+	if args.cmd == "bias":
+		return args.cmd_bias in ("pipeline", "train")
+	return args.cmd in ("pipeline", "train")
+
+def check_bigwig_input(args):
+	# a -bw given in place of reads is used as it is, so a wrong path would only surface after the output directory
+	# exists (and chrombpnet refuses an existing output directory)
+	bigwig = getattr(args, "bigwig", None)
+	if trains_a_model(args) and bigwig is not None and not os.path.isfile(bigwig):
+		raise FileNotFoundError("Input bigwig (-bw) not found: {}".format(bigwig))
+
 def check_model_runtime(args):
 	# fail before any output directory is created
+	check_bigwig_input(args)
 	check_tomtom(args)
 	device = getattr(args, "device", None)
 	if device == "cpu":

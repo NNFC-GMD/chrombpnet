@@ -61,10 +61,10 @@ TRAINING_FLAGS = dict(optimizer="adam", muon_lr=None, ema=False, ema_momentum=0.
 INTERPRET_FLAGS = dict(shap_seed=1234, shap_batch_seqs=None, shap_precision="auto")
 MODISCO_FLAGS = dict(interpret_subsample=30000, modisco_max_seqlets=50000, modisco_window=500, tomtom_lite=False)
 NEW_DEFAULTS = {
-    "pipeline": dict(TRAINING_FLAGS, device="auto", **INTERPRET_FLAGS, **MODISCO_FLAGS),
-    "train": dict(TRAINING_FLAGS, device="auto", **INTERPRET_FLAGS, **MODISCO_FLAGS),
-    "bias pipeline": dict(TRAINING_FLAGS, device="auto", **INTERPRET_FLAGS, **MODISCO_FLAGS),
-    "bias train": dict(TRAINING_FLAGS, device="auto", **INTERPRET_FLAGS, **MODISCO_FLAGS),
+    "pipeline": dict(TRAINING_FLAGS, device="auto", bigwig=None, **INTERPRET_FLAGS, **MODISCO_FLAGS),
+    "train": dict(TRAINING_FLAGS, device="auto", bigwig=None, **INTERPRET_FLAGS, **MODISCO_FLAGS),
+    "bias pipeline": dict(TRAINING_FLAGS, device="auto", bigwig=None, **INTERPRET_FLAGS, **MODISCO_FLAGS),
+    "bias train": dict(TRAINING_FLAGS, device="auto", bigwig=None, **INTERPRET_FLAGS, **MODISCO_FLAGS),
     "qc": dict(device="auto", **INTERPRET_FLAGS, **MODISCO_FLAGS),
     "bias qc": dict(device="auto", **INTERPRET_FLAGS, **MODISCO_FLAGS),
     "contribs_bw": dict(INTERPRET_FLAGS),
@@ -415,6 +415,122 @@ def test_device_check_initialises_no_other_jax_backend(device):
     env = {k: v for k, v in os.environ.items() if k != "JAX_PLATFORMS"}
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+# ---------------------------------------------------------------- -bw: a prepared bigwig instead of reads
+
+TRAINING_COMMANDS = ["pipeline", "train", "bias pipeline", "bias train"]
+
+
+def _with_bigwig(command, bigwig="x.bw"):
+    argv = list(MINIMAL_ARGV[command])
+    i = argv.index("-ibam")
+    argv[i:i + 2] = ["-bw", bigwig]
+    return argv
+
+
+@pytest.mark.parametrize("command", TRAINING_COMMANDS)
+def test_bigwig_replaces_reads(command):
+    args = parsers.read_parser(_with_bigwig(command))
+    assert args.bigwig == "x.bw"
+    assert (args.input_bam_file, args.input_fragment_file, args.input_tagalign_file) == (None, None, None)
+
+
+@pytest.mark.parametrize("flag", ["-ibw", "--bigwig"])
+def test_bigwig_aliases(flag):
+    argv = _with_bigwig("bias train")
+    argv[argv.index("-bw")] = flag
+    assert parsers.read_parser(argv).bigwig == "x.bw"
+
+
+@pytest.mark.parametrize("command", TRAINING_COMMANDS)
+def test_bigwig_and_reads_are_exclusive(command, capsys):
+    with pytest.raises(SystemExit):
+        parsers.read_parser(_with_bigwig(command) + ["-ifrag", "x.tsv"])
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", TRAINING_COMMANDS)
+def test_missing_bigwig_fails_before_any_output(tmp_path, monkeypatch, command):
+    import chrombpnet.CHROMBPNET as cli
+    out = tmp_path / "out"
+    argv = _with_bigwig(command, str(tmp_path / "missing.bw"))
+    argv[argv.index("-o") + 1] = str(out)
+    monkeypatch.setattr(sys, "argv", ["chrombpnet"] + argv)
+    with pytest.raises(FileNotFoundError, match="missing.bw"):
+        cli.main()
+    assert not out.exists()
+
+
+class _StopAfterShiftQC(Exception):
+    pass
+
+
+@pytest.fixture
+def shift_qc(monkeypatch):
+    """Fake read conversion and bigwig shift QC; the pipeline stops at the shift QC."""
+    calls = []
+    import chrombpnet.helpers.preprocessing.analysis  # noqa: F401  (parent packages of the fakes)
+
+    def reads_to_bigwig_main(args):
+        calls.append(("reads_to_bigwig", args.output_prefix))
+
+    def build_pwm_main(args):
+        calls.append(("shift_qc", args.bigwig))
+        raise _StopAfterShiftQC
+
+    _install(monkeypatch, "chrombpnet.helpers.preprocessing.reads_to_bigwig", main=reads_to_bigwig_main)
+    _install(monkeypatch, "chrombpnet.helpers.preprocessing.analysis.build_pwm_from_bigwig", main=build_pwm_main)
+    return calls
+
+
+@pytest.mark.parametrize("bigwig", [None, "given.bw"])
+@pytest.mark.parametrize("command", TRAINING_COMMANDS)
+def test_reads_are_converted_only_without_bigwig(tmp_path, shift_qc, command, bigwig):
+    argv = MINIMAL_ARGV[command] if bigwig is None else _with_bigwig(command, bigwig)
+    args = parsers.read_parser(argv + ["-fp", "fp"])
+    args.output_dir = str(tmp_path)
+    fold = tmp_path / "fold.json"
+    fold.write_text(json.dumps({"train": ["chr1"], "valid": ["chr2"], "test": ["chr3"]}))
+    args.chr_fold_path = str(fold)
+    run = pipelines.train_bias_pipeline if args.cmd == "bias" else pipelines.chrombpnet_train_pipeline
+    with pytest.raises(_StopAfterShiftQC):
+        run(args)
+    converted = os.path.join(str(tmp_path), "auxiliary/fp_data")
+    if bigwig is None:
+        assert shift_qc == [("reads_to_bigwig", converted), ("shift_qc", converted + "_unstranded.bw")]
+    else:
+        assert shift_qc == [("shift_qc", "given.bw")]
+
+
+@pytest.mark.parametrize("command", TRAINING_COMMANDS)
+def test_each_run_converts_its_own_reads(tmp_path, shift_qc, command):
+    """Reads decide, not args.bigwig: the conversion sets args.bigwig, so a Namespace reused for a second run (or a
+    Python caller's leftover bigwig) must not make the next run train on the previous run's signal."""
+    fold = tmp_path / "fold.json"
+    fold.write_text(json.dumps({"train": ["chr1"], "valid": ["chr2"], "test": ["chr3"]}))
+    args = parsers.read_parser(MINIMAL_ARGV[command])
+    args.chr_fold_path = str(fold)
+    args.bigwig = "leftover.bw"
+    run = pipelines.train_bias_pipeline if args.cmd == "bias" else pipelines.chrombpnet_train_pipeline
+    for sample in ("a", "b"):
+        args.input_bam_file = sample + ".bam"
+        args.output_dir = str(tmp_path / sample)
+        with pytest.raises(_StopAfterShiftQC):
+            run(args)
+    assert shift_qc == [("reads_to_bigwig", str(tmp_path / "a/auxiliary/data")),
+                        ("shift_qc", str(tmp_path / "a/auxiliary/data_unstranded.bw")),
+                        ("reads_to_bigwig", str(tmp_path / "b/auxiliary/data")),
+                        ("shift_qc", str(tmp_path / "b/auxiliary/data_unstranded.bw"))]
+
+
+def test_no_input_at_all_is_refused(tmp_path, shift_qc):
+    args = parsers.read_parser(MINIMAL_ARGV["bias train"])
+    args.input_bam_file = None
+    args.output_dir = str(tmp_path)
+    with pytest.raises(ValueError, match="No input"):
+        pipelines.train_bias_pipeline(args)
+    assert shift_qc == []
 
 
 # ---------------------------------------------------------------- prep commands through CHROMBPNET.main

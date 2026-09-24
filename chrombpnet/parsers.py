@@ -51,6 +51,7 @@ def read_parser(argv=None):
        		group.add_argument('-ibam', '--input-bam-file', type=str, help="Input BAM file")
         	group.add_argument('-ifrag', '--input-fragment-file', type=str, help="Input fragment file")
         	group.add_argument('-itag', '--input-tagalign-file', type=str, help="Input tagAlign file")
+        	group.add_argument('-ibw', '-bw', '--bigwig', type=str, help="Input bigwig of observed signal, already shifted and unstranded (as `reads_to_bigwig` writes it). Used in place of converting reads, which is skipped")
         	required_train.add_argument('-o', '--output-dir', type=str, required=True, help="Output dir (path/to/output/dir)")
         	required_train.add_argument('-d', '--data-type', required=True, type=str, choices=['ATAC', 'DNASE'], help="assay type")
         	required_train.add_argument("-p", "--peaks", type=str, required=True, help="10 column bed file of peaks. Sequences and labels will be extracted centered at start (2nd col) + summit (10th col).")
