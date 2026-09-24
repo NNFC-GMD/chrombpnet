@@ -150,6 +150,17 @@ def chrombpnet_train_pipeline(args):
 	# separating models from logs
 	os.rename(os.path.join(args.output_dir,"evaluation/{}chrombpnet_nobias_footprints.h5".format(fpx)),os.path.join(args.output_dir,"auxiliary/{}chrombpnet_nobias_footprints.h5".format(fpx)))
 
+	if getattr(args, "skip_interpretation", False):
+		# the pipeline report needs the motif report, so write the one `train` writes (training curves, bias model in
+		# peaks, bigWig shift QC); the predictions and footprints are in evaluation/ but not in the report
+		import chrombpnet.helpers.generate_reports.make_html as make_html
+		args_copy = copy.deepcopy(args)
+		args_copy.input_dir = args_copy.output_dir
+		args_copy.command = "train"
+		make_html.main(args_copy)
+		print("Finished training, predictions and footprints; interpretation skipped (--skip-interpretation). Exiting!")
+		return
+
 	# get contributions scores with model
 	args_copy = copy.deepcopy(args)
 	args_copy.peaks = os.path.join(args.output_dir,"auxiliary/{}filtered.peaks.bed".format(fpx))

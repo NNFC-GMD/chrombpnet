@@ -61,7 +61,8 @@ TRAINING_FLAGS = dict(optimizer="adam", muon_lr=None, ema=False, ema_momentum=0.
 INTERPRET_FLAGS = dict(shap_seed=1234, shap_batch_seqs=None, shap_precision="auto")
 MODISCO_FLAGS = dict(interpret_subsample=30000, modisco_max_seqlets=50000, modisco_window=500, tomtom_lite=False)
 NEW_DEFAULTS = {
-    "pipeline": dict(TRAINING_FLAGS, device="auto", bigwig=None, **INTERPRET_FLAGS, **MODISCO_FLAGS),
+    "pipeline": dict(TRAINING_FLAGS, device="auto", bigwig=None, skip_interpretation=False, **INTERPRET_FLAGS,
+                     **MODISCO_FLAGS),
     "train": dict(TRAINING_FLAGS, device="auto", bigwig=None, **INTERPRET_FLAGS, **MODISCO_FLAGS),
     "bias pipeline": dict(TRAINING_FLAGS, device="auto", bigwig=None, **INTERPRET_FLAGS, **MODISCO_FLAGS),
     "bias train": dict(TRAINING_FLAGS, device="auto", bigwig=None, **INTERPRET_FLAGS, **MODISCO_FLAGS),
@@ -371,7 +372,7 @@ def test_missing_tomtom_fails_before_any_output(tmp_path, monkeypatch, no_tomtom
 
 
 @pytest.mark.parametrize("command,extra", [("pipeline", ["--tomtom-lite"]), ("bias qc", ["--tomtom-lite"]),
-                                           ("train", []), ("bias train", [])])
+                                           ("pipeline", ["--skip-interpretation"]), ("train", []), ("bias train", [])])
 def test_tomtom_not_needed(no_tomtom, command, extra):
     import chrombpnet.CHROMBPNET as cli
     cli.check_model_runtime(parsers.read_parser(MINIMAL_ARGV[command] + extra))
@@ -531,6 +532,74 @@ def test_no_input_at_all_is_refused(tmp_path, shift_qc):
     with pytest.raises(ValueError, match="No input"):
         pipelines.train_bias_pipeline(args)
     assert shift_qc == []
+
+
+# ---------------------------------------------------------------- pipeline --skip-interpretation
+
+@pytest.mark.parametrize("command", ["train", "qc", "bias pipeline", "bias train", "bias qc"])
+def test_skip_interpretation_is_a_pipeline_flag(command, capsys):
+    with pytest.raises(SystemExit):
+        parsers.read_parser(MINIMAL_ARGV[command] + ["--skip-interpretation"])
+    assert "unrecognized arguments: --skip-interpretation" in capsys.readouterr().err
+
+
+@pytest.fixture
+def fake_training(fake_steps, monkeypatch):
+    """fake_steps plus the training half of chrombpnet_train_pipeline; each fake writes what the next step reads."""
+    calls = fake_steps
+    import chrombpnet.helpers.hyperparameters  # noqa: F401  (parent packages of the fakes)
+    import chrombpnet.helpers.preprocessing.analysis  # noqa: F401
+    import chrombpnet.training.models  # noqa: F401
+
+    def hyperparams_main(args):
+        calls.append(("hyperparams", args.output_prefix))
+        for name in ("bias_model_scaled.h5", "chrombpnet_model_params.tsv", "chrombpnet_data_params.tsv"):
+            open(args.output_prefix + name, "w").close()
+        peaks = pd.DataFrame({0: ["chr1"] * 3, 1: [0, 1000, 2000], 2: [500, 1500, 2500]})
+        peaks.to_csv(args.output_prefix + "filtered.peaks.bed", sep="\t", header=False, index=False)
+
+    def predict_main(args):
+        calls.append(("predict", args.model_h5, args.output_prefix))
+        with open(args.output_prefix + "_metrics.json", "w") as f:
+            json.dump({"counts_metrics": {"peaks": {"pearsonr": 0.5}}}, f)
+
+    def train_main(args):
+        calls.append(("train", args.output_prefix))
+        for ext in (".log", ".log.batch", ".args.json"):
+            open(args.output_prefix + ext, "w").close()
+
+    _install(monkeypatch, "chrombpnet.helpers.preprocessing.analysis.build_pwm_from_bigwig",
+             main=lambda args: calls.append(("shift_qc", args.bigwig)))
+    _install(monkeypatch, "chrombpnet.helpers.hyperparameters.find_chrombpnet_hyperparams", main=hyperparams_main)
+    _install(monkeypatch, "chrombpnet.training.predict", main=predict_main)
+    _install(monkeypatch, "chrombpnet.training.train", main=train_main)
+    _install(monkeypatch, "chrombpnet.training.models.chrombpnet_with_bias_model", __file__="arch.py")
+    return calls
+
+
+@pytest.mark.parametrize("skip", [False, True])
+def test_skip_interpretation_stops_after_the_footprints(tmp_path, fake_training, skip):
+    out = tmp_path / "out"
+    for sub in ("logs", "auxiliary", "models", "evaluation"):  # CHROMBPNET.main creates these
+        (out / sub).mkdir(parents=True)
+    fold = tmp_path / "fold.json"
+    fold.write_text(json.dumps({"train": ["chr1"], "valid": ["chr2"], "test": ["chr3"]}))
+    args = parsers.read_parser(_with_bigwig("pipeline", "given.bw") + ["-fp", "fp"]
+                               + (["--skip-interpretation"] if skip else []))
+    args.output_dir, args.chr_fold_path = str(out), str(fold)
+    pipelines.chrombpnet_train_pipeline(args)
+
+    kinds = [c[0] for c in fake_training]
+    assert kinds[:6] == ["shift_qc", "hyperparams", "predict", "train", "predict", "footprints"]
+    assert (out / "auxiliary/fp_chrombpnet_nobias_footprints.h5").exists()
+    if skip:
+        assert kinds[6:] == ["make_html"]
+        assert fake_training[-1] == ("make_html", str(out), "train")
+        assert not (out / "auxiliary/interpret_subsample").exists()
+        assert not (out / "auxiliary/fp_30K_subsample_peaks.bed").exists()
+    else:
+        assert kinds[6:] == ["interpret", "motifs", "report", "pdf", "make_html"]
+        assert fake_training[-1] == ("make_html", str(out), "pipeline")
 
 
 # ---------------------------------------------------------------- prep commands through CHROMBPNET.main

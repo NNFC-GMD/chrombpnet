@@ -295,6 +295,7 @@ commands take which flag.
 | `--shap-seed`, `--shap-batch-seqs`, `--shap-precision` | DeepSHAP reference seed (default 1234), sequences per batch (default: automatic), precision (default `auto`: full float32 on CPU, TF32 on GPU as in 1.x) |
 | `--modisco-max-seqlets`, `--modisco-window` | TF-MoDISco limits (defaults 50000 and 500) |
 | `--tomtom-lite` | match motifs with TOMTOM-lite instead of MEME `tomtom`: much faster, needs no MEME, reports p-values |
+| `--skip-interpretation` | `pipeline` only: stop after the predictions and marginal footprinting, so DeepSHAP and TF-MoDISco can run as a separate job (`contribs_bw`, then the `modisco` CLI) |
 
 ## Compatibility with chrombpnet 1.x
 

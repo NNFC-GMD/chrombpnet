@@ -13,10 +13,11 @@ logging.getLogger('matplotlib.font_manager').disabled = True
 MODEL_COMMANDS = ["pipeline", "train", "qc", "bias", "pred_bw", "contribs_bw", "footprints", "export"]
 
 def runs_modisco(args):
-	# the commands that end with modisco motifs + modisco report (train / bias train stop after training)
+	# the commands that end with modisco motifs + modisco report (train / bias train stop after training, and
+	# pipeline --skip-interpretation after the footprints)
 	if args.cmd == "bias":
 		return args.cmd_bias in ("pipeline", "qc")
-	return args.cmd in ("pipeline", "qc")
+	return args.cmd in ("pipeline", "qc") and not getattr(args, "skip_interpretation", False)
 
 def check_tomtom(args):
 	# modisco report needs MEME's tomtom unless --tomtom-lite; found the way evaluation/modisco/run.py finds it

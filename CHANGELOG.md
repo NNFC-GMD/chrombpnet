@@ -102,6 +102,11 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
   `-ibam/-ifrag/-itag`: a bigWig that is already shifted and unstranded, as `reads_to_bigwig` writes it. It is
   used where it is (not copied into `auxiliary/`; its path is in `logs/*.args.json`), and the reads-to-bigWig
   conversion with its shift estimation is skipped. The bigWig shift QC (`evaluation/bw_shift_qc`) still runs.
+- Pipeline: `--skip-interpretation` on `pipeline` stops after the predictions and marginal footprinting
+  (`auxiliary/chrombpnet_nobias_footprints.h5`) and then writes the training report, the one `train` writes; the
+  report is the last thing written. No contribution scores, TF-MoDISco or motif report, and MEME `tomtom` is not
+  required. For running the interpretation as a separate job instead of holding the GPU through the CPU-bound
+  TF-MoDISco.
 - Training: `--optimizer {adam,muon}`, `--muon-lr`, `--ema`, `--lr-schedule {constant,cosine}`,
   `--precision {default,highest,bf16}`, `--device {auto,gpu,cpu}`.
 - Interpretation: `--interpret-subsample` (default 30000), `--shap-seed` (default 1234), `--shap-batch-seqs`,

@@ -164,6 +164,7 @@ def read_parser(argv=None):
         optional_pipeline_parser.add_argument("-dil", "--n-dilation-layers", type=int, default=8, help="Number of dilation layers to use in chrombpnet model")
         optional_pipeline_parser.add_argument("-j", "--max-jitter", type=int, default=500, help="Maximum jitter applied on either side of region (default 500 for chrombpnet model)")
         optional_pipeline_parser.add_argument("-bs", "--batch-size", type=int, default=64, help="batch size to use for model training")
+        optional_pipeline_parser.add_argument("--skip-interpretation", default=False, action="store_true", help="Stop after the predictions and marginal footprinting: no contribution scores, TF-MoDISco or motif report (so no MEME tomtom needed), and the training report instead of the pipeline one. For running interpretation as a separate job, e.g. with contribs_bw and then the modisco CLI")
  
         # chrombpnet model qc arguments
 
