@@ -23,7 +23,7 @@ from chrombpnet.evaluation.interpret.dinuc_shuffle import NUM_SHUFFLES, make_ref
 from chrombpnet.training.utils.layers import LogSumExp
 
 HEADS = ("counts", "profile")
-PRECISIONS = ("highest", "high", "default")
+PRECISIONS = ("auto", "highest", "high", "default")
 ADDITIVITY_THRESHOLD = 1e-3
 
 _LINEAR_LAYERS = (
@@ -114,10 +114,55 @@ def deeplift_rules(model, relu=deeplift_jax.dl_relu):
             layer.dtype_policy = policy
 
 
-def auto_batch_seqs(model):
-    """Sequences per step: 16 for wide models (>= 256 filters, e.g. chrombpnet_nobias 512x8), 64 otherwise."""
-    filters = [layer.filters for layer in iter_layers(model) if isinstance(layer, keras.layers.Conv1D)]
-    return 16 if filters and max(filters) >= 256 else 64
+def _activation_floats_per_row(model):
+    """Conv1D output values per input row, summed over layers (what the backward pass keeps per row)."""
+    total = 0
+    for layer in iter_layers(model):
+        if isinstance(layer, keras.layers.Conv1D):
+            shape = layer.output.shape[1:]
+            if any(d is None for d in shape):
+                return None
+            total += int(np.prod(shape))
+    return total
+
+
+def auto_batch_seqs(model, n_heads=1, num_shuffles=NUM_SHUFFLES, device=None):
+    """Sequences per step, sized from the model's activations and the free device memory.
+
+    Each sequence contributes 2 * num_shuffles rows (itself repeated and its references). Measured on an
+    RTX PRO 6000: chrombpnet_nobias (512x8) needs ~1.7 GB per sequence for one head, and throughput is flat
+    from 2 sequences per step on, so steps are kept to ~8 GB (4 sequences for 512x8, ~28 for a 128x4 bias).
+    """
+    per_row = None
+    try:
+        per_row = _activation_floats_per_row(model)
+    except Exception:  # symbolic shapes unavailable (e.g. a subclassed model)
+        pass
+    if not per_row:
+        filters = [layer.filters for layer in iter_layers(model) if isinstance(layer, keras.layers.Conv1D)]
+        return 4 if filters and max(filters) >= 256 else 16
+    bytes_per_seq = 2 * num_shuffles * per_row * 4 * (1.3 + 0.5 * (n_heads - 1))
+    budget = 8e9
+    device = device or jax.devices()[0]
+    try:
+        stats = device.memory_stats() or {}
+    except Exception:
+        stats = {}
+    if stats.get("bytes_limit"):
+        free = stats["bytes_limit"] - stats.get("bytes_in_use", 0)
+        budget = min(budget, 0.6 * free)
+    return int(max(1, min(32, budget // bytes_per_seq)))
+
+
+def resolve_precision(precision, backend=None):
+    """'auto' -> full float32 on CPU (free there) and the backend default (TF32 on Ampere+) on GPU.
+
+    Full float32 convolutions are extremely slow on some GPUs (about 300x slower than TF32 on an RTX PRO 6000
+    Blackwell), and chrombpnet 1.x also ran DeepSHAP in TF32 on GPUs.
+    """
+    if precision != "auto":
+        return precision
+    return "highest" if (backend or jax.default_backend()) == "cpu" else "default"
 
 
 def precision_context(precision):
@@ -149,15 +194,16 @@ class DeepLiftShap:
         model: Keras 3 model with outputs [profile logits, log counts].
         heads: subset of ("counts", "profile").
         profile_weighting: see deeplift_jax.profile_weights; "chrombpnet" reproduces chrombpnet 1.x.
-        precision: matmul/conv precision while tracing: "highest" (full float32, default), "high" or "default"
-            (TF32 on Ampere+ GPUs; faster, noisier near ReLU branch switches).
+        precision: matmul/conv precision while tracing: "auto" (default: "highest" on CPU, "default" on GPU),
+            "highest" (full float32), "high", or "default" (TF32 on Ampere+ GPUs; faster, noisier near ReLU
+            branch switches).
         batch_seqs: sequences per step (each with num_shuffles references); None picks auto_batch_seqs(model).
         num_shuffles: references per sequence when they are generated here.
         additivity_threshold: warn when a pair's |sum m*(x-r) - delta| / max(|delta|, 1) exceeds it.
         variant: "paired" (reference-half cotangent zeroed) or "full" (TFDeepExplainer-like, for tests).
     """
 
-    def __init__(self, model, heads=HEADS, profile_weighting="chrombpnet", precision="highest", batch_seqs=None,
+    def __init__(self, model, heads=HEADS, profile_weighting="chrombpnet", precision="auto", batch_seqs=None,
                  num_shuffles=NUM_SHUFFLES, additivity_threshold=ADDITIVITY_THRESHOLD, variant="paired"):
         heads = tuple(h for h in HEADS if h in tuple(heads))
         if not heads:
@@ -166,6 +212,7 @@ class DeepLiftShap:
         if profile_weighting not in deeplift_jax.PROFILE_WEIGHTINGS:
             raise ValueError("profile_weighting must be one of {}, got {!r}".format(
                 deeplift_jax.PROFILE_WEIGHTINGS, profile_weighting))
+        precision = resolve_precision(precision)
         precision_context(precision)
         if variant not in ("paired", "full"):
             raise ValueError("variant must be 'paired' or 'full'")
@@ -259,7 +306,7 @@ class DeepLiftShap:
         get_refs = self._reference_fn(references, seed)
         tv = [v.value for v in self.model.trainable_variables]
         ntv = [v.value for v in self.model.non_trainable_variables]
-        chunk = min(self.batch_seqs or auto_batch_seqs(self.model), n)
+        chunk = min(self.batch_seqs or auto_batch_seqs(self.model, len(self.heads), self.num_shuffles), n)
 
         def load(start):
             stop = min(start + chunk, n)

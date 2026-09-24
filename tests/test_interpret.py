@@ -134,7 +134,8 @@ def test_scores_match_explainer(workdir, run_default):
 def test_args_json_records_settings(run_default):
     with open(run_default.output_prefix + ".interpret.args.json") as f:
         rec = json.load(f)
-    assert rec["precision"] == "highest" and rec["device"] == "auto" and rec["seed"] == 1234
+    assert rec["precision"] == "auto" and rec["device"] == "auto" and rec["seed"] == 1234
+    assert rec["precision_resolved"] == ("highest" if rec["jax_backend"] == "cpu" else "default")
     assert rec["batch_seqs"] == 2 and rec["num_shuffles"] == 20 and rec["profile_weighting"] == "chrombpnet"
     assert rec["jax_backend"] in ("cpu", "gpu") and rec["jax_devices"]
     assert rec["model_h5"] == run_default.model_h5
@@ -183,11 +184,11 @@ def test_resolve_settings_precedence():
     assert (s["seed"], s["precision"], s["batch_seqs"], s["device"]) == (7, "default", 3, "cpu")
     with pytest.warns(UserWarning, match="bf16"):
         s = interpret.resolve_settings(argparse.Namespace(precision="bf16"))
-    assert s["precision"] == "highest" and s["seed"] == 1234 and s["device"] == "auto"
+    assert s["precision"] == "auto" and s["seed"] == 1234 and s["device"] == "auto"
     with pytest.raises(ValueError):
         interpret.resolve_settings(argparse.Namespace(shap_precision="bf16"))
     s = interpret.resolve_settings(argparse.Namespace())
-    assert s == {"seed": 1234, "batch_seqs": None, "precision": "highest", "device": "auto", "num_shuffles": 20,
+    assert s == {"seed": 1234, "batch_seqs": None, "precision": "auto", "device": "auto", "num_shuffles": 20,
                  "profile_weighting": "chrombpnet", "save_references": False, "references": None}
 
 

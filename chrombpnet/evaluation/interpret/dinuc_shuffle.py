@@ -96,21 +96,30 @@ def _walk_python(tokens, shuf_next_inds):
     return result
 
 
+def _walk_kernel_py(tokens, flat_next_inds, offsets, result):
+    counters = np.zeros(offsets.shape[0] - 1, dtype=np.int64)
+    ind = 0
+    result[0] = tokens[ind]
+    for j in range(1, tokens.shape[0]):
+        t = tokens[ind]
+        k = offsets[t] + counters[t]
+        if k >= offsets[t + 1]:
+            return False
+        ind = flat_next_inds[k]
+        counters[t] += 1
+        result[j] = tokens[ind]
+    return True
+
+
+# numba's on-disk cache needs a writable cache directory; without one, njit(cache=True) raises at decoration time
+_walk_kernel = None
 if numba is not None:
-    @numba.njit(cache=True, nogil=True)
-    def _walk_kernel(tokens, flat_next_inds, offsets, result):
-        counters = np.zeros(offsets.shape[0] - 1, dtype=np.int64)
-        ind = 0
-        result[0] = tokens[ind]
-        for j in range(1, tokens.shape[0]):
-            t = tokens[ind]
-            k = offsets[t] + counters[t]
-            if k >= offsets[t + 1]:
-                return False
-            ind = flat_next_inds[k]
-            counters[t] += 1
-            result[j] = tokens[ind]
-        return True
+    for _cache in (True, False):
+        try:
+            _walk_kernel = numba.njit(cache=_cache, nogil=True)(_walk_kernel_py)
+            break
+        except (RuntimeError, OSError):
+            continue
 
 
 def _walk_numba(tokens, shuf_next_inds):
@@ -154,7 +163,7 @@ def dinuc_shuffle(seq, num_shufs=None, rng=None, use_numba=True):
     if rng is None:
         rng = np.random.RandomState()
 
-    walk = _walk_numba if (use_numba and numba is not None) else _walk_python
+    walk = _walk_numba if (use_numba and _walk_kernel is not None) else _walk_python
 
     # Get the set of all characters, and a mapping of which positions have which
     # characters; use `tokens`, which are integer representations of the

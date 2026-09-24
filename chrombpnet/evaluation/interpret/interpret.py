@@ -14,7 +14,7 @@ import chrombpnet.evaluation.interpret.input_utils as input_utils
 import chrombpnet.evaluation.interpret.scores_io as scores_io
 
 NARROWPEAK_SCHEMA = ["chr", "start", "end", "1", "2", "3", "4", "5", "6", "summit"]
-PRECISIONS = ("highest", "high", "default")
+PRECISIONS = ("auto", "highest", "high", "default")
 DEVICES = ("auto", "gpu", "cpu")
 PROFILE_WEIGHTINGS = ("chrombpnet", "chrombpnet_tf", "softmax_x", "tangermeme")
 
@@ -28,8 +28,8 @@ def fetch_interpret_args():
     parser.add_argument("-p", "--profile_or_counts", nargs="+", type=str, default=["counts", "profile"], choices=["counts", "profile"],
                         help="use either counts or profile or both for running shap")
     parser.add_argument("--seed", type=int, default=1234, help="Seed for the dinucleotide-shuffled references (combined with each sequence's content, so scores do not depend on region order or batching)")
-    parser.add_argument("--batch-seqs", type=int, default=None, help="Sequences per device step (each with its shuffled references); default: 16 for >=256-filter models, 64 otherwise")
-    parser.add_argument("--precision", type=str, default="highest", choices=PRECISIONS, help="Matmul/conv precision: 'highest' = full float32 (default), 'default' = TF32 on Ampere+ GPUs (faster, less exact)")
+    parser.add_argument("--batch-seqs", type=int, default=None, help="Sequences per device step (each with its shuffled references); default: chosen from the model size and free device memory, halved on out-of-memory")
+    parser.add_argument("--precision", type=str, default="auto", choices=PRECISIONS, help="Matmul/conv precision: 'auto' (default) = full float32 on CPU and TF32 on GPU (as chrombpnet 1.x); 'highest' = full float32 everywhere (very slow on some GPUs); 'default' = TF32 on Ampere+ GPUs")
     parser.add_argument("--device", type=str, default="auto", choices=DEVICES, help="'gpu' fails if JAX has no GPU; 'cpu' forces the CPU")
     parser.add_argument("--num-shuffles", type=int, default=20, help="Dinucleotide-shuffled references per sequence")
     parser.add_argument("--profile-weighting", type=str, default="chrombpnet", choices=PROFILE_WEIGHTINGS, help="Profile-head logit weights; 'chrombpnet' reproduces chrombpnet 1.x, the others are for comparison only")
@@ -64,12 +64,12 @@ def _setting(args, name, default):
 def resolve_settings(args):
     seed, _ = _setting(args, "seed", 1234)
     batch_seqs, _ = _setting(args, "batch_seqs", None)
-    precision, source = _setting(args, "precision", "highest")
+    precision, source = _setting(args, "precision", "auto")
     if precision not in PRECISIONS:
         if source == "precision":
             # a training-only value (e.g. bf16) reaching interpret through a shared namespace
-            warnings.warn("DeepSHAP does not support precision {!r}; using 'highest'".format(precision))
-            precision = "highest"
+            warnings.warn("DeepSHAP does not support precision {!r}; using 'auto'".format(precision))
+            precision = "auto"
         else:
             raise ValueError("DeepSHAP precision must be one of {}, got {!r}".format(PRECISIONS, precision))
     device = getattr(args, "device", None) or "auto"
@@ -108,7 +108,7 @@ def load_references(path, seqs):
     return refs.astype(np.int8)
 
 
-def interpret(model, seqs, output_prefix, profile_or_counts, seed=1234, batch_seqs=None, precision="highest",
+def interpret(model, seqs, output_prefix, profile_or_counts, seed=1234, batch_seqs=None, precision="auto",
               profile_weighting="chrombpnet", num_shuffles=20, save_references=False, references=None):
     from chrombpnet.evaluation.interpret.explainer import DeepLiftShap, timed_iter
 
@@ -158,6 +158,8 @@ def main(args):
     # write all the command line arguments to a json file, plus the DeepSHAP settings actually used
     record = dict(vars(args))
     record.update({k: v for k, v in settings.items() if k != "references" or v is not None})
+    from chrombpnet.evaluation.interpret.explainer import resolve_precision
+    record["precision_resolved"] = resolve_precision(settings["precision"])
     record.update({"jax_backend": jax.default_backend(), "jax_devices": [str(d) for d in jax.devices()],
                    "chrombpnet_version": chrombpnet.__version__})
     with open("{}.interpret.args.json".format(args.output_prefix), "w") as fp:
@@ -170,6 +172,9 @@ def main(args):
 
     with device_context(settings["device"]):
         model = input_utils.load_model_wrapper(args)
+        # fail before fetching sequences or writing outputs if the model has no DeepSHAP rules here
+        from chrombpnet.evaluation.interpret.explainer import check_model
+        check_model(model, args.profile_or_counts)
 
         # infer input length
         inputlen = model.input_shape[1] # if bias model (1 input only)

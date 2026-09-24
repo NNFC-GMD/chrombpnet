@@ -389,5 +389,23 @@ def test_unsupported_layers_raise():
 
 
 def test_auto_batch_seqs(model):
-    assert auto_batch_seqs(model) == 64
-    assert auto_batch_seqs(build_bpnet(filters=256, n_dil=1)) == 16
+    # small models are capped at 32 sequences per step
+    assert auto_batch_seqs(model) == 32
+    # chrombpnet_nobias-sized (512 filters, 8 dilated layers, 2114 bp): ~1.8 GB per sequence -> 4 in 8 GB
+    wide = build_bpnet(filters=512, n_dil=8, inputlen=2114)
+    assert auto_batch_seqs(wide) == 4
+    assert auto_batch_seqs(wide, n_heads=2) == 3
+
+    class SmallDevice:
+        def memory_stats(self):
+            return {"bytes_limit": 3e9, "bytes_in_use": 1e9}
+
+    # only 60% of the 2 GB still free may be used
+    assert auto_batch_seqs(wide, device=SmallDevice()) == 1
+
+
+def test_resolve_precision():
+    from chrombpnet.evaluation.interpret.explainer import resolve_precision
+    assert resolve_precision("auto", backend="cpu") == "highest"
+    assert resolve_precision("auto", backend="gpu") == "default"
+    assert resolve_precision("highest", backend="gpu") == "highest"
