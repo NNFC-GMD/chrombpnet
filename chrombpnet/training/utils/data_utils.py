@@ -48,7 +48,8 @@ def get_coords(peaks_df, peaks_bool):
 def get_seq_cts_coords(peaks_df, genome, bw, input_width, output_width, peaks_bool):
 
     seq = get_seq(peaks_df, genome, input_width)
-    cts = get_cts(peaks_df, bw, output_width)
+    # bigWig values are float32: storing them as float32 (not float64) is exact and halves the counts' memory
+    cts = get_cts(peaks_df, bw, output_width).astype(np.float32)
     coords = get_coords(peaks_df, peaks_bool)
     return seq, cts, coords
 

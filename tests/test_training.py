@@ -244,6 +244,34 @@ def test_generator_contract(data):
         initializers.fetch_data_and_model_params_based_on_mode("predict", args, params, None, None)
 
 
+def test_take_per_row_matches_one_shot_indexing():
+    # the chunked gather gives exactly what one fancy-indexing call over all rows gives
+    from chrombpnet.training.utils.augment import take_per_row
+    rng = np.random.RandomState(0)
+    for shape, width in (((37, 50, 4), 20), ((37, 50), 20), ((5, 9), 9)):
+        a = rng.randint(0, 100, shape).astype(np.float32 if len(shape) == 2 else np.int8)
+        starts = rng.randint(0, shape[1] - width + 1, shape[0])
+        expected = a[np.arange(shape[0])[:, None], starts[:, None] + np.arange(width)]
+        for chunk_rows in (1, 4, 64):
+            got = take_per_row(a, starts, width, chunk_rows=chunk_rows)
+            assert got.dtype == a.dtype and np.array_equal(got, expected)
+
+
+def test_generator_keeps_one_copy_of_the_epoch(data):
+    args = make_args(data, "unused", bpnet_model.__file__, str(data / "peaks.bed"), str(data / "nonpeaks.bed"),
+                     inputlen=INPUTLEN, outputlen=OUTPUTLEN)
+    params = {"inputlen": str(INPUTLEN), "outputlen": str(OUTPUTLEN), "negative_sampling_ratio": "0.5",
+              "max_jitter": str(MAX_JITTER)}
+    gen = initializers.initialize_generators(args, "train", params, return_coords=False)
+    for _ in range(2):
+        assert gen.seqs is gen.cur_seqs and gen.cts is gen.cur_cts and gen.coords is gen.cur_coords
+        assert gen.peak_cts.dtype == np.float32 and gen.cur_cts.dtype == np.float32
+        x, (y, logcounts) = gen[0]
+        assert logcounts.dtype == np.float64
+        np.testing.assert_array_equal(logcounts, np.log(1 + y.astype(np.float64).sum(-1, keepdims=True)))
+        gen.on_epoch_end()
+
+
 def test_json_safe_args():
     args = argparse.Namespace(a=1, b="x", c=[1, "y"], d=None, e=True, f=object(), g=(1.5,), h={"k": 1})
     out = train.json_safe_args(args)
