@@ -35,7 +35,15 @@ def get_model(args, parameters):
     print("got the model")
     return model, architecture_module
 
-class Float32ModelCheckpoint(keras.callbacks.ModelCheckpoint):
+class EpochModelCheckpoint(keras.callbacks.ModelCheckpoint):
+    """ModelCheckpoint for save_freq="epoch": its on_train_batch_end is then a no-op, so it is safe for Keras'
+    asynchronous batch-callback dispatch (otherwise the overridden batch hook makes every step wait for the loss
+    to reach the host before the next step is dispatched)."""
+
+    async_safe = True
+
+
+class Float32ModelCheckpoint(EpochModelCheckpoint):
     """ModelCheckpoint that writes the model with float32 policies (used under --precision bf16), so that the
     best-so-far model left by an interrupted run loads and runs in float32 like the final one. The layers go back
     to their training policies right after each save."""
@@ -49,7 +57,7 @@ def fit_and_evaluate(model,train_gen,valid_gen,args,architecture_module):
     model_output_path_h5_name=args.output_prefix+".h5"
     model_output_path_logs_name=args.output_prefix+".log"
 
-    checkpoint_class = Float32ModelCheckpoint if runtime.bf16_active() else keras.callbacks.ModelCheckpoint
+    checkpoint_class = Float32ModelCheckpoint if runtime.bf16_active() else EpochModelCheckpoint
     checkpointer = checkpoint_class(filepath=model_output_path_h5_name, monitor="val_loss", mode="min",  verbose=1, save_best_only=True)
     # Keras 3 restores the best weights at the end of training even when --epochs is reached without an early stop
     earlystopper = keras.callbacks.EarlyStopping(monitor='val_loss', mode="min", patience=args.early_stop, verbose=1, restore_best_weights=True)

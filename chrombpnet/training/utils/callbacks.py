@@ -4,7 +4,12 @@ class LossHistory(keras.callbacks.Callback):
     """
     Callbacks to store train, validation loss at the the end of every batch and the end of every epoch.
     You can also track the counts loss and profile loss seperatley using the callbacks provided.
+    Safe for Keras' asynchronous batch-callback dispatch: batches may arrive out of order from a thread pool, so the
+    losses are kept by batch index and written in batch order at the end of the epoch (after Keras has waited for
+    every pending batch callback).
     """
+
+    async_safe = True
     
     def __init__(self,model_output_path_logs_name,to_track):
         self.model_output_path_logs_name=model_output_path_logs_name
@@ -17,23 +22,19 @@ class LossHistory(keras.callbacks.Callback):
         self.losses ={}
 
     def on_epoch_begin(self,epoch, logs=None):
+        # {batch index: [value of each trackable]}
         self.losses[epoch]={}
-        for trackable in self.to_track:
-            self.losses[epoch][trackable]=[]         
         self.cur_epoch=epoch
         
     def on_batch_end(self, batch, logs=None):
         logs = logs or {}
-        for trackable in self.to_track:
-            self.losses[self.cur_epoch][trackable].append(logs.get(trackable))
+        self.losses[self.cur_epoch][batch]=[logs.get(trackable) for trackable in self.to_track]
         
     def on_epoch_end(self,epoch,logs=None):
-        marker=self.to_track[0] 
-        num_batches=len(self.losses[self.cur_epoch][marker])
-        for i in range(num_batches):
+        for i in sorted(self.losses[epoch]):
             self.outf.write(str(epoch)+'\t'+str(i))
-            for trackable in self.to_track:
-                self.outf.write('\t'+str(self.losses[epoch][trackable][i]))
+            for value in self.losses[epoch][i]:
+                self.outf.write('\t'+str(value))
             self.outf.write('\n')
 
         

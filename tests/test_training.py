@@ -291,6 +291,28 @@ def test_loss_history_without_logs(tmp_path):
     assert open(tmp_path / "log.batch").read().splitlines() == ["Epoch\tBatch\tloss", "0\t0\tNone", "0\t1\t1.5"]
 
 
+def test_loss_history_writes_batches_in_order(tmp_path):
+    # with asynchronous dispatch, batch callbacks can run out of order on Keras' thread pool
+    history = LossHistory(str(tmp_path / "log.batch"), ["loss"])
+    history.on_train_begin()
+    history.on_epoch_begin(0)
+    for batch in (2, 0, 1):
+        history.on_batch_end(batch, {"loss": float(batch)})
+    history.on_epoch_end(0)
+    history.on_train_end()
+    assert open(tmp_path / "log.batch").read().splitlines() == ["Epoch\tBatch\tloss", "0\t0\t0.0", "0\t1\t1.0",
+                                                                 "0\t2\t2.0"]
+
+
+def test_training_callbacks_allow_async_dispatch(tmp_path):
+    # no callback of fit_and_evaluate may make every step wait for its loss on the host
+    callbacks = [train.EpochModelCheckpoint(filepath=str(tmp_path / "m.h5"), monitor="val_loss", save_best_only=True),
+                 train.Float32ModelCheckpoint(filepath=str(tmp_path / "m.h5"), monitor="val_loss", save_best_only=True),
+                 keras.callbacks.EarlyStopping(monitor="val_loss"), keras.callbacks.CSVLogger(str(tmp_path / "log")),
+                 LossHistory(str(tmp_path / "log.batch"), ["loss"]), keras.callbacks.SwapEMAWeights(swap_on_epoch=True)]
+    assert keras.callbacks.CallbackList(callbacks)._async_train
+
+
 def test_density_scatter_with_nans():
     from matplotlib import pyplot as plt
     from chrombpnet.training.utils.metrics_utils import density_scatter
