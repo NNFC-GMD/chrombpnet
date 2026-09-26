@@ -1,8 +1,10 @@
 # Validation of ChromBPNet 2.x (Keras 3 / JAX)
 
-This page compares ChromBPNet 2.x with chrombpnet 1.x (TensorFlow 2.x) on one public ENCODE ATAC-seq dataset,
+This page compares ChromBPNet 2.x with chrombpnet 1.x (TensorFlow 2.x) on two public ENCODE ATAC-seq datasets,
 using the models and bigWigs that ENCODE released, and describes how the code is tested. Sections 2 to 5 are the
-comparisons, section 6 is the test suite, sections 7 and 8 are GPU notes and what has not been tested yet.
+comparisons on the first dataset, section 5b retrains on the ChromBPNet paper's K562 dataset to measure accuracy,
+training speed, precision and host memory, section 6 is the test suite, and sections 7 and 8 are GPU notes and what
+has not been tested yet.
 
 ## 1. What was compared, and on what
 
@@ -144,11 +146,64 @@ higher (136.731 vs 136.616) and its mean test Pearson slightly higher (0.6008 vs
 size of the seed-to-seed standard deviations (0.117-0.126 and 0.0018-0.0054). This is 3 seeds on one dataset
 and one fold. Adam stays the default, and Muon stays an opt-in.
 
+## 5b. K562: training speed, precision and host memory
+
+The ChromBPNet paper's K562 ATAC-seq dataset (ENCODE experiment ENCSR868FGK; the paper's models, annotation
+ENCSR467RSV): observed bigWig ENCFF874FUM, training and test regions ENCFF991RUK, and the published fold-0
+models and training log ENCFF984RAF. Fold 0 (validation chr8 and chr20; test chr1, chr3 and chr6, 66,474 peaks),
+ENCODE's fold-0 bias model, batch 64, learning rate 1e-3, patience 5, on one RTX PRO 6000 Blackwell, genome
+IGVFFI0653VCGH. Models were scored with the pipeline's `predict` on the same test peaks as the published model.
+The runs used a development branch with the same training code as this release plus two experimental options
+that were left off.
+
+**Full fold 0** (all 186k fold-0 training peaks), two seeds per precision:
+
+| model | best val loss | best epoch / run | test counts Pearson | Spearman | median JSD | counts MSE | time |
+|---|---|---|---|---|---|---|---|
+| published 1.x model (ENCODE) | - | 14 / 19 | 0.6995 | 0.6048 | 0.3411 | 0.643 | ~14.5 h training |
+| 2.x, `--precision default` (TF32), seed 1234 | 947.1 | 7 / 12 | 0.6978 | 0.5959 | 0.3435 | 0.647 | 64 min |
+| 2.x, `--precision default` (TF32), seed 2 | 945.2 | 11 / 16 | 0.6971 | 0.6017 | 0.3421 | 0.620 | 84 min |
+| 2.x, `--precision bf16`, seed 1234 | 955.6 | 7 / 12 | 0.6919 | 0.5921 | 0.3441 | 0.783 | 30 min |
+| 2.x, `--precision bf16`, seed 2 | 951.1 | 6 / 11 | 0.6933 | 0.5930 | 0.3432 | 0.646 | 28 min |
+
+Times are per run: loading, training and both predictions (the hyperparameter step ran once beforehand and is not
+included). The published run took ~46 min per epoch (870 ms per step at batch 64, from its training log, on its own
+hardware); 2.x takes 88 ms per step in TF32 and 35 ms in bf16 on the RTX PRO 6000.
+
+- With the default precision, 2.x reproduces the published model: test counts Pearson 0.697-0.698 vs 0.6995,
+  median JSD 0.342-0.344 vs 0.341.
+- bf16 trains 2.5x faster per step at a small, consistent cost on the full fold: validation loss about 0.8%
+  higher, counts Pearson about 0.005 lower; median JSD within 0.001. On a subset of the training chromosomes
+  (104k peaks, three seeds per precision) the two were indistinguishable (best validation loss 965.0 ± 3.4 TF32,
+  963.5 ± 3.0 bf16; test counts Pearson 0.686 vs 0.688).
+- So bf16 suits fast, exploratory training, with the default precision for the final model: for example,
+  training a ChromBPNet model with each candidate bias model to choose one, or trying settings. It was tested
+  only for ChromBPNet models trained with a fixed bias model; training bias models in bf16 was not tested.
+
+**Batch size.** Larger batches add little throughput: in a benchmark on random data, TF32 gains 1.2x from batch 64
+to 128 and nothing beyond, and bf16 gains nothing. At batch 64 the GPU is already busy 98-99% of the time in
+profiler traces, mostly in cuDNN's kernels for the dilated convolutions. TF32 at batch 128 (learning rate 1.41e-3,
+one seed, subset) runs 14% faster per epoch but needed twice the epochs and reached a worse model (best validation
+loss 971.7, Pearson 0.672). bf16 at batch 256 with a square-root-scaled learning rate (2e-3) collapsed the counts
+head (test counts Pearson -0.06). Batch 64 remains the default.
+
+**Host memory.** Loading full fold 0 (186k training peaks and 371k nonpeaks) with the training data loader, then
+the per-epoch reshuffle (once with the old loader, twice with the new one), on the CPU before the GPU runtime
+starts:
+
+| loader | load time | resident after loading | peak |
+|---|---|---|---|
+| before this release's loader changes | 162 s | 20.3 GiB | 26.2 GiB |
+| with them (float32 counts, chunked crops, one copy of each epoch; one bigWig read per group of nearby regions) | 52 s | 11.5 GiB | 13.9 GiB |
+
+The batches and arrays are bit-identical before and after. With the GPU runtime added, the full-fold training
+runs above peaked at 13.8-14.0 GiB of host memory, so K562-sized folds now fit in 32 GB.
+
 ## 6. How the code is tested
 
 ### Unit tests (CPU, in CI)
 
-The 19 test modules at the top level of `tests/` (about 210 test functions) run on the CPU. `tests/conftest.py` builds a small
+The 21 test modules at the top level of `tests/` (about 245 test functions) run on the CPU. `tests/conftest.py` builds a small
 synthetic dataset once per session: 3 chromosomes (~90 kb) with a FASTA and `.fai`, a chrom sizes file,
 10-column narrowPeak peaks and nonpeaks, a counts bigWig with read pile-ups at the peak summits, an AP-1 motif
 planted at every summit, and a fold JSON. The tests need no network access and no reference data.
@@ -172,6 +227,7 @@ Some of what the unit tests check:
 | `test_export_legacy_h5.py` | `chrombpnet export --legacy-h5`: file layout and Keras 2 model config, round trip through `model_io.load_model` (atol 1e-6), bpnet-lite's reader; with `CHROMBPNET_GOLDENS` set, the layout against the TF-Keras 2.12 files and re-exported 1.x files identical to the originals; with `CHROMBPNET_TF_PYTHON` (a Python with TensorFlow 2.x) set, TF-Keras loads the exports |
 | `test_models.py`, `test_training.py`, `test_hyperparams.py`, `test_predict.py`, `test_interpret.py`, `test_footprints.py` | architectures, `train`, hyperparameter search, prediction and bigWig writing, interpretation and footprinting end to end on the synthetic data with tiny models, including the restored best epoch, EMA, Muon, cosine schedule and bf16 options |
 | `test_preprocessing.py`, `test_modisco_run.py`, `test_reports.py`, `test_cli.py` | seeded read sampling and shift detection, gzipped inputs, bigWig building, the modisco calls, the HTML/PDF reports, CLI defaults and pipeline wiring |
+| `test_one_hot.py`, `test_data_utils.py` | the lookup-table one-hot encoding and the region loaders are bit-identical to the previous implementations (lowercase and N bases, bigWig gaps, chromosome ends, duplicated and unsorted regions) |
 | `test_imports.py`, `test_infra.py` | every module imports without TensorFlow; pixi activation, CI action references and the Docker image environment |
 
 On a GPU machine, `pixi run -e cuda13-dev test` runs the same tests with the GPU build of JAX, and
@@ -225,24 +281,26 @@ On a GPU, also export `XLA_FLAGS=--xla_gpu_deterministic_ops=true`.
 ## 7. GPU notes
 
 While training (512 filters, batch 64) on the RTX PRO 6000, the GPU runs kernels almost all the time, but its
-power draw and memory bandwidth stay well below the card's limits: training at batch 64 does not saturate this
-GPU. Larger batches and bf16 training are follow-ups. The current `--precision bf16` option loses accuracy and
-is not recommended yet. The default precision uses TF32 for convolutions, as TensorFlow did for 1.x. See
-[GPU notes](README.md#gpu-notes) in the README for drivers, memory and shared GPUs.
+power draw and memory bandwidth stay well below the card's limits. Most of each step is spent in cuDNN's kernels
+for the dilated 1D convolutions, and larger batches add little throughput (section 5b). The default precision uses
+TF32 for convolutions, as TensorFlow did for 1.x; `--precision bf16` is 2.5x faster per step at a small accuracy
+cost (section 5b). See [GPU notes](README.md#gpu-notes) in the README for drivers, memory and shared GPUs.
 
 ## 8. Limitations and what has not been tested yet
 
 - **Other GPUs.** Only the RTX PRO 6000 Blackwell (sm_120) was used. H100 (sm_90) and B200 (sm_100) have not
   been tested. On such a machine, `pixi run -e cuda13 gpu-check` lists the GPUs JAX sees and
   `pixi run -e cuda13-dev test-gpu` runs the GPU tests.
-- **One dataset, one fold.** One ENCODE ATAC-seq dataset was used, and only fold 0 was retrained, with three
-  seeds per optimizer and Muon at one learning rate (2e-3). No DNase-seq data was compared.
-- **Bias model not retrained.** Retraining reused ENCODE's fold-0 bias model, so bias-model training was not
-  compared on this data.
+- **Two datasets, one fold.** Two ENCODE ATAC-seq datasets were used (ENCSR763OVZ and the K562 dataset of
+  section 5b), and only fold 0 was retrained, with one to three seeds per setting and Muon at one learning rate
+  (2e-3). No DNase-seq data was compared.
+- **Bias model not retrained.** Retraining reused ENCODE's fold-0 bias models, so bias-model training was not
+  compared, in any precision.
 - **Preprocessing not compared.** Retraining started from ENCODE's bigWig, so the steps from reads to bigWig
   (shift detection, bigWig building) are not part of these comparisons.
 - **300 regions.** Predictions and contribution scores were compared on 300 regions, and contribution scores
   only for `chrombpnet_nobias`.
 - **Downstream outputs.** TF-MoDISco motifs, footprints and the HTML/PDF reports were not compared with ENCODE's.
 - **JSD** is not comparable with ENCODE's QC report (different definitions).
-- **bf16** loses accuracy and is not recommended; training at batch 64 does not use the whole GPU.
+- **bf16** was compared on K562 only (section 5b), on one fold and one GPU, for ChromBPNet models with a fixed
+  bias model.

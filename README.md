@@ -289,7 +289,7 @@ commands take which flag.
 | `--muon-lr` | Muon learning rate (default 2e-3) |
 | `--ema` | train with an exponential moving average of the weights (momentum 0.999), and evaluate and save the averaged weights |
 | `--lr-schedule {constant,cosine}` | learning-rate schedule (default `constant`) |
-| `--precision {default,highest,bf16}` | float32 matmul/convolution precision for training: `default` lets the GPU use TF32 as TensorFlow did, `highest` forces full float32, `bf16` trains in mixed bfloat16 |
+| `--precision {default,highest,bf16}` | float32 matmul/convolution precision for training: `default` lets the GPU use TF32 as TensorFlow did, `highest` forces full float32, `bf16` trains in mixed bfloat16. `bf16` is 2.5x faster per step with slightly lower accuracy (K562: counts Pearson about 0.005 lower): use it for fast exploratory runs, such as training a ChromBPNet model with each candidate bias model to choose one, and the default for final models. It was tested only for ChromBPNet models trained with a fixed bias model; training bias models in bf16 was not tested ([VALIDATION.md](VALIDATION.md), section 5b) |
 | `--device {auto,gpu,cpu}` | `gpu` fails immediately if JAX sees no GPU, instead of silently training on the CPU |
 | `--interpret-subsample N` | number of peaks used for DeepSHAP and TF-MoDISco in the pipelines (default 30000) |
 | `--shap-seed`, `--shap-batch-seqs`, `--shap-precision` | DeepSHAP reference seed (default 1234), sequences per batch (default: automatic), precision (default `auto`: full float32 on CPU, TF32 on GPU as in 1.x) |
