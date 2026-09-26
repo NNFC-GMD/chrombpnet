@@ -1,14 +1,21 @@
 import numpy as np
 
 # https://stackoverflow.com/questions/46091111/python-slice-array-at-different-position-on-every-row
-def take_per_row(A, indx, num_elem):
+def take_per_row(A, indx, num_elem, chunk_rows=4096):
     """
     Matrix A, indx is a vector for each row which specifies 
     slice beginning for that row. Each has width num_elem.
+
+    Rows are gathered in chunks, so the int64 index array is chunk_rows x num_elem instead of one row per example
+    (about 17 KB per example at num_elem 2114).
     """
 
-    all_indx = indx[:,None] + np.arange(num_elem)
-    return A[np.arange(all_indx.shape[0])[:,None], all_indx]
+    out = np.empty((A.shape[0], num_elem) + A.shape[2:], dtype=A.dtype)
+    cols = np.arange(num_elem)
+    for start in range(0, A.shape[0], chunk_rows):
+        stop = min(start + chunk_rows, A.shape[0])
+        out[start:stop] = A[np.arange(start, stop)[:,None], indx[start:stop,None] + cols]
+    return out
 
 
 def random_crop(seqs, labels, seq_crop_width, label_crop_width, coords):

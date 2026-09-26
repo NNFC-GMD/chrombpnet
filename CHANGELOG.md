@@ -86,6 +86,18 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
 - Removed: the legacy modisco-0.5 scripts (`evaluation/modisco/{run_modisco,fetch_tomtom,visualize_motif_matches}.py`,
   `modisco.sh`) and `evaluation/invivo_footprints/`.
 
+### Training data loading and speed
+- The training data loader holds much less host memory: counts are kept as float32 (bigWig values are float32,
+  so this is exact), random crops are gathered in chunks instead of one large index array, and each epoch keeps
+  one copy of its examples and frees the previous epoch's first. On K562 fold 0 the peak drops from 26.2 GiB to
+  13.9 GiB. Batches are bit-identical to before.
+- Regions load faster: sequences, counts and coordinates are read from numpy columns instead of
+  `DataFrame.iterrows()`, and the bigWig is read once per group of nearby regions. K562 fold 0 loads in 52 s
+  instead of 162 s, with bit-identical arrays.
+- Training batch callbacks (the per-batch loss log and the epoch checkpoint) are dispatched asynchronously, so a
+  training step no longer waits for the previous step's loss to reach the host. Logs and checkpoints are
+  unchanged.
+
 ### New command
 - `chrombpnet export -m model.(h5|keras) -o out.h5 [--legacy-h5] [--count-head {bytecode,named}]` writes a bias,
   chrombpnet or chrombpnet_nobias model as a TF-Keras 2.x full-model .h5 file, in the layout chrombpnet 1.x wrote
@@ -124,6 +136,10 @@ ChromBPNet moves from TensorFlow 2.8 / tf.keras to Keras 3 on the JAX backend, s
   predicted-signal bigWigs (median per-region r 1.00000), DeepSHAP agrees with ENCODE's scores as closely as two
   of our own runs with different reference seeds, and fold 0 retrained with the default Adam recipe reaches the
   test counts Pearson of ENCODE's fold-0 model (section 5).
+- On the ChromBPNet paper's K562 ATAC-seq dataset (ENCSR868FGK), full fold 0 retrained with the defaults matches
+  the published model (test counts Pearson 0.697-0.698 vs 0.6995); `--precision bf16` trains 2.5x faster per step
+  with counts Pearson about 0.005 lower, suited to exploratory runs (tested for ChromBPNet models with a fixed bias
+  model); larger batches add little throughput and did not reach a good model sooner (section 5b).
 
 ### Known issues (pre-existing in 1.x)
 - `chrombpnet qc` and `chrombpnet bias qc` read `auxiliary/filtered*.bed` (e.g. `filtered.peaks.bed`,

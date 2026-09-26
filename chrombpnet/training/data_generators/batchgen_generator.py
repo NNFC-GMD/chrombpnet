@@ -64,16 +64,20 @@ class ChromBPNetBatchGenerator(keras.utils.PyDataset):
         # random crop training data to inputlen and outputlen (with corresponding offsets), revcomp augmentation
         # shuffle required since otherwise peaks and nonpeaks will be together
         #Sample a fraction of the negative samples according to the specified ratio
+        # release the previous epoch's arrays before building the next ones (host memory: one epoch at a time)
+        self.seqs = self.cts = self.coords = None
+        self.cur_seqs = self.cur_cts = self.cur_coords = None
         if (self.peak_seqs is not None) and (self.nonpeak_seqs is not None):
             # crop peak data before stacking
             cropped_peaks, cropped_cnts, cropped_coords = augment.random_crop(self.peak_seqs, self.peak_cts, self.inputlen, self.outputlen, self.peak_coords)
             #print(cropped_peaks.shape)
             #print(self.nonpeak_seqs.shape)
             if self.negative_sampling_ratio < 1.0:
-                self.sampled_nonpeak_seqs, self.sampled_nonpeak_cts, self.sampled_nonpeak_coords = subsample_nonpeak_data(self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_coords, len(self.peak_seqs), self.negative_sampling_ratio)
-                self.seqs = np.vstack([cropped_peaks, self.sampled_nonpeak_seqs])
-                self.cts = np.vstack([cropped_cnts, self.sampled_nonpeak_cts])
-                self.coords = np.vstack([cropped_coords, self.sampled_nonpeak_coords])
+                sampled_nonpeak_seqs, sampled_nonpeak_cts, sampled_nonpeak_coords = subsample_nonpeak_data(self.nonpeak_seqs, self.nonpeak_cts, self.nonpeak_coords, len(self.peak_seqs), self.negative_sampling_ratio)
+                self.seqs = np.vstack([cropped_peaks, sampled_nonpeak_seqs])
+                self.cts = np.vstack([cropped_cnts, sampled_nonpeak_cts])
+                self.coords = np.vstack([cropped_coords, sampled_nonpeak_coords])
+                del cropped_peaks, cropped_cnts, cropped_coords, sampled_nonpeak_seqs, sampled_nonpeak_cts, sampled_nonpeak_coords
             else:
                 self.seqs = np.vstack([cropped_peaks, self.nonpeak_seqs])
                 self.cts = np.vstack([cropped_cnts, self.nonpeak_cts])
@@ -100,16 +104,21 @@ class ChromBPNetBatchGenerator(keras.utils.PyDataset):
                                             self.seqs, self.cts, self.coords, self.inputlen, self.outputlen, 
                                             self.add_revcomp, shuffle=self.shuffle_at_epoch_start
                                           )
+        # keep one copy of the epoch's examples: with shuffling, cur_* are permuted copies of seqs/cts/coords (the
+        # same examples, so len() is unchanged); without it they are the same arrays
+        self.seqs, self.cts, self.coords = self.cur_seqs, self.cur_cts, self.cur_coords
 
     def __getitem__(self, idx):
         batch_seq = self.cur_seqs[idx*self.batch_size:(idx+1)*self.batch_size]
         batch_cts = self.cur_cts[idx*self.batch_size:(idx+1)*self.batch_size]
         batch_coords = self.cur_coords[idx*self.batch_size:(idx+1)*self.batch_size]
 
+        # the counts are float32; the total is summed in float64 as before
+        log_counts = np.log(1+batch_cts.sum(-1, keepdims=True, dtype=np.float64))
         if self.return_coords:
-            return (batch_seq, (batch_cts, np.log(1+batch_cts.sum(-1, keepdims=True))), batch_coords)
+            return (batch_seq, (batch_cts, log_counts), batch_coords)
         else:
-            return (batch_seq, (batch_cts, np.log(1+batch_cts.sum(-1, keepdims=True))))
+            return (batch_seq, (batch_cts, log_counts))
 
     def on_epoch_end(self):
         self.crop_revcomp_data()

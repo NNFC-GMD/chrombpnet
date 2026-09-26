@@ -244,6 +244,34 @@ def test_generator_contract(data):
         initializers.fetch_data_and_model_params_based_on_mode("predict", args, params, None, None)
 
 
+def test_take_per_row_matches_one_shot_indexing():
+    # the chunked gather gives exactly what one fancy-indexing call over all rows gives
+    from chrombpnet.training.utils.augment import take_per_row
+    rng = np.random.RandomState(0)
+    for shape, width in (((37, 50, 4), 20), ((37, 50), 20), ((5, 9), 9)):
+        a = rng.randint(0, 100, shape).astype(np.float32 if len(shape) == 2 else np.int8)
+        starts = rng.randint(0, shape[1] - width + 1, shape[0])
+        expected = a[np.arange(shape[0])[:, None], starts[:, None] + np.arange(width)]
+        for chunk_rows in (1, 4, 64):
+            got = take_per_row(a, starts, width, chunk_rows=chunk_rows)
+            assert got.dtype == a.dtype and np.array_equal(got, expected)
+
+
+def test_generator_keeps_one_copy_of_the_epoch(data):
+    args = make_args(data, "unused", bpnet_model.__file__, str(data / "peaks.bed"), str(data / "nonpeaks.bed"),
+                     inputlen=INPUTLEN, outputlen=OUTPUTLEN)
+    params = {"inputlen": str(INPUTLEN), "outputlen": str(OUTPUTLEN), "negative_sampling_ratio": "0.5",
+              "max_jitter": str(MAX_JITTER)}
+    gen = initializers.initialize_generators(args, "train", params, return_coords=False)
+    for _ in range(2):
+        assert gen.seqs is gen.cur_seqs and gen.cts is gen.cur_cts and gen.coords is gen.cur_coords
+        assert gen.peak_cts.dtype == np.float32 and gen.cur_cts.dtype == np.float32
+        x, (y, logcounts) = gen[0]
+        assert logcounts.dtype == np.float64
+        np.testing.assert_array_equal(logcounts, np.log(1 + y.astype(np.float64).sum(-1, keepdims=True)))
+        gen.on_epoch_end()
+
+
 def test_json_safe_args():
     args = argparse.Namespace(a=1, b="x", c=[1, "y"], d=None, e=True, f=object(), g=(1.5,), h={"k": 1})
     out = train.json_safe_args(args)
@@ -261,6 +289,28 @@ def test_loss_history_without_logs(tmp_path):
     history.on_epoch_end(0)
     history.on_train_end()
     assert open(tmp_path / "log.batch").read().splitlines() == ["Epoch\tBatch\tloss", "0\t0\tNone", "0\t1\t1.5"]
+
+
+def test_loss_history_writes_batches_in_order(tmp_path):
+    # with asynchronous dispatch, batch callbacks can run out of order on Keras' thread pool
+    history = LossHistory(str(tmp_path / "log.batch"), ["loss"])
+    history.on_train_begin()
+    history.on_epoch_begin(0)
+    for batch in (2, 0, 1):
+        history.on_batch_end(batch, {"loss": float(batch)})
+    history.on_epoch_end(0)
+    history.on_train_end()
+    assert open(tmp_path / "log.batch").read().splitlines() == ["Epoch\tBatch\tloss", "0\t0\t0.0", "0\t1\t1.0",
+                                                                 "0\t2\t2.0"]
+
+
+def test_training_callbacks_allow_async_dispatch(tmp_path):
+    # no callback of fit_and_evaluate may make every step wait for its loss on the host
+    callbacks = [train.EpochModelCheckpoint(filepath=str(tmp_path / "m.h5"), monitor="val_loss", save_best_only=True),
+                 train.Float32ModelCheckpoint(filepath=str(tmp_path / "m.h5"), monitor="val_loss", save_best_only=True),
+                 keras.callbacks.EarlyStopping(monitor="val_loss"), keras.callbacks.CSVLogger(str(tmp_path / "log")),
+                 LossHistory(str(tmp_path / "log.batch"), ["loss"]), keras.callbacks.SwapEMAWeights(swap_on_epoch=True)]
+    assert keras.callbacks.CallbackList(callbacks)._async_train
 
 
 def test_density_scatter_with_nans():
